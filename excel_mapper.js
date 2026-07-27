@@ -17,6 +17,9 @@ Column map (aligned with result.xlsx Impact):
 
 Rules: see docs/emd_mapping.md
 
+  Maps UVP_SW_*, BEHAVIOR_MODE_IF_*, and Individual model support (PRD)
+  sections. VCP and ■PRD_SW remain out of scope.
+
 ExcelJS workaround:
   Sheet name "History" is protected by ExcelJS. Before load/save we temporarily
   rename it to "_History_renamed_" inside xl/workbook.xml via JSZip, then restore
@@ -47,7 +50,9 @@ const SECTION = {
     NONE: "none",
     UVP: "uvp",
     VCP: "vcp",
-    BEHAVIOR: "behavior"
+    BEHAVIOR: "behavior",
+    PRD: "prd",
+    PRD_SW: "prd_sw"
 };
 
 function cellText(value) {
@@ -283,6 +288,16 @@ function detectSection(bText, current) {
         return SECTION.BEHAVIOR;
     }
 
+    // EMD: "■Individual model support ( Include PRD_SW )" — analyzer kind=prd_switch
+    if (/^■?\s*Individual\s+model\s+support/i.test(text)) {
+        return SECTION.PRD;
+    }
+
+    // Separate model list under ■PRD_SW — out of scope (not in prd_switch.json)
+    if (text === "■PRD_SW" || text === "PRD_SW") {
+        return SECTION.PRD_SW;
+    }
+
     return current;
 }
 
@@ -292,9 +307,12 @@ function isSectionMarker(bText) {
         text === "■UVP" ||
         text === "■VCP" ||
         text === "■Behavior Mode" ||
+        text === "■PRD_SW" ||
         text === "UVP" ||
         text === "VCP" ||
-        /^■?\s*Behavior\s*Mode$/i.test(text)
+        text === "PRD_SW" ||
+        /^■?\s*Behavior\s*Mode$/i.test(text) ||
+        /^■?\s*Individual\s+model\s+support/i.test(text)
     );
 }
 
@@ -328,6 +346,11 @@ function isNameStart(bText, section) {
         return b.startsWith("BEHAVIOR_MODE_IF_");
     }
 
+    // PRD switches use mixed prefixes (REN_EPC_*, WSC_*, EPC_ENV_*, RNU_*, …)
+    if (section === SECTION.PRD) {
+        return /^[A-Z][A-Z0-9_]*$/.test(b);
+    }
+
     return false;
 }
 
@@ -356,6 +379,7 @@ function collectNameGroups(worksheet) {
 
         if (
             section === SECTION.VCP ||
+            section === SECTION.PRD_SW ||
             section === SECTION.NONE ||
             isSectionMarker(bText) ||
             isHeaderOrMetaRow(bText, cText)
@@ -648,7 +672,7 @@ function writeGuideSheet(workbook) {
         {
             topic: "Column",
             item: "Name",
-            description: "Switch or behavior name (EMD column B)."
+            description: "Switch, behavior, or PRD switch name (EMD column B)."
         },
         {
             topic: "Column",
@@ -740,7 +764,8 @@ async function writeMappingLogWorkbook(logEntries, stats) {
     summary.addRow({
         metric: "EMD name groups",
         value: stats.groupCount,
-        description: "UVP_SW_* / BEHAVIOR_MODE_IF_* Name blocks on EMD."
+        description:
+            "UVP_SW_* / BEHAVIOR_MODE_IF_* / Individual model support (PRD) Name blocks on EMD."
     });
     summary.addRow({
         metric: "Matched",
@@ -781,7 +806,7 @@ async function writeMappingLogWorkbook(logEntries, stats) {
     ];
     actions.addRow({
         action: "What happened",
-        name: "Switch / behavior name",
+        name: "Switch / behavior / PRD name",
         emdRow: "Row # on EMD",
         affecting: "EMD column C",
         result: "EMD column E",
