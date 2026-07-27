@@ -1,0 +1,327 @@
+================================================================================
+CodeAnalyzer — Final Pipeline Explanation
+================================================================================
+
+This document explains the final working set of files:
+
+  config/switches.json
+  config/behavior.json
+  config/prd_switch.json
+  analyzer.js
+  excel_mapper.js
+  result.json
+
+Run order:
+  1) node analyzer.js
+  2) node excel_mapper.js
+
+ASCII-only results (O / X / -). No ■ box markers. No Unicode ○ / ×.
+
+
+================================================================================
+OVERVIEW
+================================================================================
+
+Two-step pipeline:
+
+  Phase 1  analyzer.js
+           Reads config + profile.mk + codefiles/
+           Scans for switches / behaviors / PRD switches
+           Writes result.json (+ result.xlsx for humans)
+
+  Phase 2  excel_mapper.js
+           Reads result.json + EMD Excel template
+           Fills EMD Name / Affecting / Result columns
+           Writes updated workbook + mapping_log.xlsx
+
+result.json is the bridge between Phase 1 and Phase 2.
+
+
+================================================================================
+1. CONFIG FILES (master name lists)
+================================================================================
+
+These JSON files are the official lists of names the analyzer checks.
+Order in each file is preserved in reports.
+
+---------------------------------------------------------------------------
+config/switches.json
+---------------------------------------------------------------------------
+  Key:  "switches"  (array of UVP_SW_* names)
+
+  Purpose:
+    Master list of UVP software switches to scan in .cpp / .h / .mk files
+    and score against profile.mk.
+
+  Example names:
+    UVP_SW_FAX
+    UVP_SW_AI_SYSTEM
+    UVP_SW_OCR
+
+  EMD section mapped later:
+    UVP section (UVP_SW_*)
+
+---------------------------------------------------------------------------
+config/behavior.json
+---------------------------------------------------------------------------
+  Key:  "behavior_modes"  (array of BEHAVIOR_MODE_IF_* names)
+
+  Purpose:
+    Master list of runtime behavior-mode checks in C++ source.
+
+  Pairing rule used by analyzer:
+    BEHAVIOR_MODE_IF_XXX  <->  UVP_SW_XXX (from profile.mk)
+
+  Example names:
+    BEHAVIOR_MODE_IF_FAX
+    BEHAVIOR_MODE_IF_AI_SYSTEM
+
+  EMD section mapped later:
+    Behavior Mode section (BEHAVIOR_MODE_IF_*)
+
+---------------------------------------------------------------------------
+config/prd_switch.json
+---------------------------------------------------------------------------
+  Key:  "PRD"  (array of PRD / local / env switch names)
+
+  Purpose:
+    Master list of PRD / renEPC local switches (not UVP_SW_*).
+    These are presence checks in code (found = O, missing = -).
+    They are NOT scored against profile.mk the same way UVP switches are.
+
+  Example names:
+    REN_EPC_COMMAND_ANALYZER_DEBUG
+    REN_EPC_ENV_USE_PROTOBUF
+    WSC_SWITCH_TGT_SIM
+
+  EMD section mapped later:
+    Individual model support (Include PRD_SW) section
+
+  Out of scope:
+    The separate PRD_SW model-list section in EMD is not mapped.
+
+
+================================================================================
+2. analyzer.js — Phase 1 (scan + score)
+================================================================================
+
+PURPOSE
+-------
+Scan renEPC source for the names listed in the three config files,
+compare against profile.mk where applicable, and produce:
+  - result.json   (for excel_mapper.js)
+  - result.xlsx   (human report: Summary / Detail / Impact)
+
+INPUTS
+------
+  config/switches.json
+  config/behavior.json
+  config/prd_switch.json
+  profile.mk
+  codefiles/          (recursive .cpp / .h / .mk sources)
+
+WHAT IT SCANS
+-------------
+  UVP switches:
+    #ifdef / #ifndef / #if defined(UVP_SW_XXX)
+    makefile ifeq ($(UVP_SW_XXX), $(TRUE/FALSE))
+    other references to the switch name
+
+  Behavior modes (.cpp):
+    runtime checks like if (BEHAVIOR_MODE_IF_XXX)
+    compound conditions with && / ||
+
+  PRD switches:
+    presence of the PRD name in source files
+
+RESULT SYMBOLS (ASCII only)
+---------------------------
+  O  = PASS / found OK
+       - UVP/behavior: found in code AND enabled (TRUE) in profile.mk
+       - PRD: found in code
+  X  = FAIL / mismatch
+       - UVP/behavior: found in code but FALSE or missing in profile.mk
+  -  = NONE / not found in renEPC source
+
+OUTPUT SHAPE (result.json)
+--------------------------
+  {
+    "generatedAt": "...",
+    "switches": {
+      "UVP_SW_FAX": {
+        "kind": "switch",            // or "behavior" or "prd_switch"
+        "profile": "TRUE",           // TRUE / FALSE / NOT_FOUND (as applicable)
+        "result": "O",               // O / X / -
+        "occurrenceCount": 10,
+        "impacts": [
+          { "file": "some.cpp", "function": "Class::method" },
+          ...
+        ]
+      },
+      ...
+    }
+  }
+
+  Notes:
+    - Top-level key is still named "switches", but it holds all three kinds.
+    - If nothing is found, impacts contains:
+        { "file": "Not Found", "function": "" }
+
+
+================================================================================
+3. result.json — Bridge file
+================================================================================
+
+PURPOSE
+-------
+Machine-readable output of analyzer.js.
+excel_mapper.js does NOT rescan code; it only maps this JSON into EMD.
+
+IMPORTANT FIELDS PER NAME
+-------------------------
+  kind             switch | behavior | prd_switch
+  profile          profile.mk value (when relevant)
+  result           O / X / -
+  occurrenceCount  how many hits were found
+  impacts[]        file + function pairs used to fill EMD column C
+
+
+================================================================================
+4. excel_mapper.js — Phase 2 (EMD updater)  [FINAL = noBox style]
+================================================================================
+
+PURPOSE
+-------
+Map result.json into the EMD sheet of the change-point list workbook.
+Does not rescan source code.
+
+This final version is ASCII / no-box:
+  - Result symbols written as O / X / -  (not ○ / ×)
+  - Affecting text has no ■ prefix
+  - Writes into existing column E (does NOT insert a new Result column)
+
+INPUTS
+------
+  result.json
+  renEPC_change_point_list.xlsx   (template; never overwritten)
+
+OUTPUTS
+-------
+  renEPC_change_point_list_updated.xlsx
+  mapping_log.xlsx                (Guide + Summary + Actions)
+
+Each run rebuilds from the clean template and overwrites the updated file.
+
+EMD COLUMN MAP
+--------------
+  B = Name
+  C = Affecting header/function   (plain text file / function)
+  D = Remarks                     (untouched)
+  E = Result                      (O / X / -)
+  Product columns stay as-is      (not edited)
+
+EMD SECTIONS WRITTEN
+--------------------
+  UVP section                         -> UVP_SW_*
+  Behavior Mode section               -> BEHAVIOR_MODE_IF_*
+  Individual model support (PRD)      -> PRD / local switches
+
+OUT OF SCOPE (not modified)
+---------------------------
+  VCP section
+  PRD_SW model-list section
+
+MAPPING ACTIONS
+---------------
+  Matched
+    EMD column C matches an analyzer impact
+    -> write O/X/- into column E
+
+  Inserted
+    Analyzer has an impact not present in EMD
+    -> insert row (B blank, C filled with plain file/function, E set)
+
+  NotFound
+    Analyzer result is Not Found
+    -> write "-" on the first Result cell of that Name group
+
+  Orphan
+    EMD has a C row with no analyzer match
+    -> leave E unchanged; log only
+
+  NameMissingFromEmd
+    Name exists in result.json but no EMD Name block
+    -> log only; do not create a new Name header block
+
+MATCHING RULES
+--------------
+  - Leading ■ is still stripped if present in old cells (compat)
+  - Compare file basename + function token
+  - Template-only rows are never deleted
+
+
+================================================================================
+FULL PIPELINE DIAGRAM
+================================================================================
+
+  config/switches.json ──┐
+  config/behavior.json ──┤
+  config/prd_switch.json ┼──► analyzer.js ──► result.json ──┐
+  profile.mk ────────────┤              └──► result.xlsx   │
+  codefiles/ ────────────┘                                 │
+                                                           │
+  renEPC_change_point_list.xlsx ───────────────────────────┼──► excel_mapper.js
+                                                           │
+                                                           ├──► renEPC_change_point_list_updated.xlsx
+                                                           └──► mapping_log.xlsx
+
+
+================================================================================
+TYPICAL WORKFLOW
+================================================================================
+
+1. Put .cpp / .h / .mk files under codefiles/
+2. Keep the three config JSON lists up to date
+3. Ensure profile.mk matches the build profile to check
+4. Run:  node analyzer.js
+         -> review result.xlsx
+         -> result.json is ready for Phase 2
+5. Run:  node excel_mapper.js
+         -> open renEPC_change_point_list_updated.xlsx (EMD column E filled)
+         -> open mapping_log.xlsx for match/insert/orphan details
+6. If code or config changes, re-run analyzer.js first, then excel_mapper.js
+
+
+================================================================================
+RELATED VARIANT SCRIPTS (not the final runner)
+================================================================================
+
+  excel_mapper_nochange.js
+    Older baseline: Unicode ○/× and ■ prefixes; uses 1231.xlsx
+
+  excel_mapper_insertColumn.js
+    Same Unicode/■ style, but splices a dedicated Result column at E
+    and shifts product columns to F+
+
+  excel_mapper_noBox.js
+    Same behavior as final excel_mapper.js (ASCII, no ■)
+
+Final script to run for Phase 2: excel_mapper.js
+
+
+================================================================================
+KEY FILE REFERENCE
+================================================================================
+
+  config/switches.json      UVP_SW_* master list
+  config/behavior.json      BEHAVIOR_MODE_IF_* master list
+  config/prd_switch.json    PRD / local switch master list
+  analyzer.js               Phase 1 scanner / scorer
+  result.json               Bridge output (analyzer -> mapper)
+  result.xlsx               Human-readable analyzer report
+  excel_mapper.js           Phase 2 EMD mapper (final, ASCII / no box)
+  renEPC_change_point_list.xlsx           EMD template (untouched)
+  renEPC_change_point_list_updated.xlsx   Final mapped workbook
+  mapping_log.xlsx          Mapping audit log
+
+================================================================================
