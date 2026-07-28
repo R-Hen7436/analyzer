@@ -1,24 +1,29 @@
 /*
-excel_mapper.js
 
-Phase 2 – Map analyzer result.json into 1231.xlsx sheet EMD.
+SUMMARY:
+  Same mapping flow as nochange, but ASCII-only to avoid UTF corruption.
+  Result symbols are O / X / - (not �� / ��). Affecting text has no �� prefix.
+  Still writes into existing column E (no column insert).
+  Template: renEPC_change_point_list.xlsx �� renEPC_change_point_list_updated.xlsx.
 
-  Inputs:  result.json + 1231.xlsx (EMD)
-  Outputs: 1231_Updated.xlsx
-           mapping_log.xlsx  (separate investigation log — no extra sheets
-                              inside 1231_Updated.xlsx)
+Phase 2 ? Map analyzer result.json into renEPC_change_point_list.xlsx sheet EMD.
 
-  Each run rebuilds from clean 1231.xlsx and overwrites 1231_Updated.xlsx.
+  Inputs:  result.json + renEPC_change_point_list.xlsx (EMD)
+  Outputs: renEPC_change_point_list_Updated.xlsx
+           mapping_log.xlsx  (separate investigation log ? no extra sheets
+                              inside renEPC_change_point_list_Updated.xlsx)
+
+  Each run rebuilds from clean renEPC_change_point_list.xlsx and overwrites renEPC_change_point_list_Updated.xlsx.
 
 Column map (aligned with result.xlsx Impact):
   B = Name
   C = Affecting header/function
-  E = Result (○ / × / -)
+  E = Result (O / X / -)
 
 Rules: see docs/emd_mapping.md
 
-  Maps UVP_SW_*, BEHAVIOR_MODE_IF_*, and Individual model support (PRD)
-  sections. VCP and ■PRD_SW remain out of scope.
+  Maps UVP_SW_*, BEHAVIOR_MODE_IF_*, and Local Switch
+  sections. VCP and PRD_SW remain out of scope.
 
 ExcelJS workaround:
   Sheet name "History" is protected by ExcelJS. Before load/save we temporarily
@@ -32,17 +37,18 @@ const ExcelJS = require("exceljs");
 const JSZip = require("jszip");
 
 const JSON_FILE_PATH = "./result.json";
-const TEMPLATE_PATH = "./1231.xlsx";
-const OUTPUT_PATH = "./1231_Updated.xlsx";
+const TEMPLATE_PATH = "./renEPC_change_point_list.xlsx";
+const OUTPUT_PATH = "./renEPC_change_point_list_updated.xlsx";
 const LOG_PATH = "./mapping_log.xlsx";
+const LOG_JSON_PATH = "./mapping_log.json";
 const SHEET_NAME = "EMD";
 const HISTORY_NAME = "History";
 const HISTORY_TEMP = "_History_renamed_";
 const RESULT_COL = 5; // E
 
 const RESULT_SYMBOL = {
-    O: "○",
-    X: "×",
+    O: "O",
+    X: "X",
     "-": "-"
 };
 
@@ -51,9 +57,38 @@ const SECTION = {
     UVP: "uvp",
     VCP: "vcp",
     BEHAVIOR: "behavior",
-    PRD: "prd",
+    LOCAL_SWITCH: "local_switch",
     PRD_SW: "prd_sw"
 };
+
+function writeMappingLogJson(logEntries, stats) {
+    const json = {
+        generatedAt: new Date().toISOString(),
+        summary: {
+            groupCount: stats.groupCount,
+            matchedRows: stats.matchedRows,
+            insertedRows: stats.insertedRows,
+            orphans: logEntries.filter(
+                (e) => e.action === "Orphan"
+            ).length,
+            notFound: logEntries.filter(
+                (e) => e.action === "NotFound"
+            ).length,
+            nameMissingFromEmd: logEntries.filter(
+                (e) => e.action === "NameMissingFromEmd"
+            ).length
+        },
+        actions: logEntries
+    };
+
+    fs.writeFileSync(
+        LOG_JSON_PATH,
+        JSON.stringify(json, null, 4),
+        "utf8"
+    );
+
+    return LOG_JSON_PATH;
+}
 
 function cellText(value) {
     if (value === null || value === undefined) {
@@ -113,7 +148,7 @@ function functionToken(raw) {
 function parseEmdAffecting(raw) {
     const cleaned = cellText(raw)
         .replace(/^\u25A0/, "")
-        .replace(/^■/, "")
+        .replace(/^��/, "")
         .trim();
 
     if (!cleaned) {
@@ -188,16 +223,16 @@ function formatEmdAffecting(impact) {
     const file = basenameFile(impact.file);
 
     if (!file || file === "Not Found") {
-        return "■Not Found";
+        return "Not Found";
     }
 
     const token = functionToken(impact.function);
 
     if (!token) {
-        return `■${file}`;
+        return file;
     }
 
-    return `■${file}\n${token}()`;
+    return `${file}\n${token}()`;
 }
 
 function mapResultSymbol(result) {
@@ -257,7 +292,7 @@ async function writeOutputWorkbook(workbook, outputPath) {
         return outputPath;
     } catch (error) {
         if (error && error.code === "EBUSY") {
-            const fallback = "./1231_Updated_locked.xlsx";
+            const fallback = "./renEPC_change_point_list_Updated_locked.xlsx";
             fs.writeFileSync(fallback, restored);
             console.error(
                 `${outputPath} is open/locked. Wrote to ${fallback} instead.`
@@ -288,12 +323,16 @@ function detectSection(bText, current) {
         return SECTION.BEHAVIOR;
     }
 
-    // EMD: "■Individual model support ( Include PRD_SW )" — analyzer kind=prd_switch
-    if (/^■?\s*Individual\s+model\s+support/i.test(text)) {
-        return SECTION.PRD;
+    // EMD: "Local Switch" — analyzer kind=local_switch
+    if (
+        text === "Local Switch" ||
+        text === "■Local Switch" ||
+        /^■?\s*Local\s+Switch$/i.test(text)
+    ) {
+        return SECTION.LOCAL_SWITCH;
     }
 
-    // Separate model list under ■PRD_SW — out of scope (not in prd_switch.json)
+    // Separate model list under ■PRD_SW — out of scope (not in local_switch.json)
     if (text === "■PRD_SW" || text === "PRD_SW") {
         return SECTION.PRD_SW;
     }
@@ -308,11 +347,13 @@ function isSectionMarker(bText) {
         text === "■VCP" ||
         text === "■Behavior Mode" ||
         text === "■PRD_SW" ||
+        text === "Local Switch" ||
+        text === "■Local Switch" ||
         text === "UVP" ||
         text === "VCP" ||
         text === "PRD_SW" ||
         /^■?\s*Behavior\s*Mode$/i.test(text) ||
-        /^■?\s*Individual\s+model\s+support/i.test(text)
+        /^■?\s*Local\s+Switch$/i.test(text)
     );
 }
 
@@ -346,8 +387,8 @@ function isNameStart(bText, section) {
         return b.startsWith("BEHAVIOR_MODE_IF_");
     }
 
-    // PRD switches use mixed prefixes (REN_EPC_*, WSC_*, EPC_ENV_*, RNU_*, …)
-    if (section === SECTION.PRD) {
+    // Local Switch names use mixed prefixes (REN_EPC_*, WSC_*, EPC_ENV_*, RNU_*, ...)
+    if (section === SECTION.LOCAL_SWITCH) {
         return /^[A-Z][A-Z0-9_]*$/.test(b);
     }
 
@@ -387,29 +428,30 @@ function collectNameGroups(worksheet) {
             continue;
         }
 
-        // ExcelJS expands merged Name cells onto every row in the block.
         if (isNameStart(bText, section)) {
-            if (current && current.name === bTrim) {
-                if (cText.trim() || resultText.trim()) {
-                    current.rows.push(rowNumber);
-                    current.endRow = rowNumber;
-                }
-                continue;
-            }
 
-            if (current) {
-                groups.push(current);
-            }
+    // same merged-name block
+    if (current && current.name === bTrim) {
+        current.rows.push(rowNumber);
+        current.endRow = rowNumber;
+        continue;
+    }
 
-            current = {
-                name: bTrim,
-                section,
-                startRow: rowNumber,
-                endRow: rowNumber,
-                rows: [rowNumber]
-            };
-            continue;
-        }
+    // new name begins
+    if (current) {
+        groups.push(current);
+    }
+
+    current = {
+        name: bTrim,
+        section,
+        startRow: rowNumber,
+        endRow: rowNumber,
+        rows: [rowNumber]
+    };
+
+    continue;
+}
 
         if (current && !bTrim) {
             if (cText.trim() || resultText.trim()) {
@@ -465,6 +507,7 @@ function pushLog(logEntries, entry) {
 function applyMapping(worksheet, switches) {
     const logEntries = [];
     const groups = collectNameGroups(worksheet);
+
     const emdNames = new Set(groups.map((group) => group.name));
 
     for (const name of Object.keys(switches)) {
@@ -655,13 +698,13 @@ function writeGuideSheet(workbook) {
             topic: "About this file",
             item: "mapping_log.xlsx",
             description:
-                "Investigation log for excel_mapper.js (Phase 2). Separate from 1231_Updated.xlsx on purpose — no log sheets are added inside the Updated workbook."
+                "Investigation log for excel_mapper.js (Phase 2). Separate from renEPC_change_point_list_Updated.xlsx on purpose ? no log sheets are added inside the Updated workbook."
         },
         {
             topic: "How to use",
             item: "Workflow",
             description:
-                "1) Open Summary for counts. 2) Open Actions and filter by Action. 3) Use EMD Row + Name + Affecting to find the row in 1231_Updated.xlsx. 4) Read Reason."
+                "1) Open Summary for counts. 2) Open Actions and filter by Action. 3) Use EMD Row + Name + Affecting to find the row in renEPC_change_point_list_Updated.xlsx. 4) Read Reason."
         },
         {
             topic: "Column",
@@ -672,12 +715,12 @@ function writeGuideSheet(workbook) {
         {
             topic: "Column",
             item: "Name",
-            description: "Switch, behavior, or PRD switch name (EMD column B)."
+            description: "Switch, behavior, or Local Switch name (EMD column B)."
         },
         {
             topic: "Column",
             item: "EMD Row",
-            description: "Row number on EMD in 1231_Updated.xlsx."
+            description: "Row number on EMD in renEPC_change_point_list_Updated.xlsx."
         },
         {
             topic: "Column",
@@ -688,7 +731,7 @@ function writeGuideSheet(workbook) {
             topic: "Column",
             item: "Result",
             description:
-                "Symbol written to EMD column E: ○ / × / -. Empty when E was left unchanged (Orphan)."
+                "Symbol written to EMD column E: O / X / -. Empty when E was left unchanged (Orphan)."
         },
         {
             topic: "Column",
@@ -699,7 +742,7 @@ function writeGuideSheet(workbook) {
             topic: "Action type",
             item: "Matched",
             description:
-                "Existing EMD C matched an analyzer impact; wrote ○/×/- into E."
+                "Existing EMD C matched an analyzer impact; wrote O/X/- into E."
         },
         {
             topic: "Action type",
@@ -729,7 +772,7 @@ function writeGuideSheet(workbook) {
             topic: "Related files",
             item: "Inputs / outputs",
             description:
-                "Inputs: result.json, 1231.xlsx. Outputs: 1231_Updated.xlsx (EMD E filled), mapping_log.xlsx. Each run rebuilds from 1231.xlsx. Rules: docs/emd_mapping.md."
+                "Inputs: result.json, renEPC_change_point_list.xlsx. Outputs: renEPC_change_point_list_Updated.xlsx (EMD E filled), mapping_log.xlsx. Each run rebuilds from renEPC_change_point_list.xlsx. Rules: docs/emd_mapping.md."
         }
     ];
 
@@ -765,7 +808,7 @@ async function writeMappingLogWorkbook(logEntries, stats) {
         metric: "EMD name groups",
         value: stats.groupCount,
         description:
-            "UVP_SW_* / BEHAVIOR_MODE_IF_* / Individual model support (PRD) Name blocks on EMD."
+            "UVP_SW_* / BEHAVIOR_MODE_IF_* / Local Switch Name blocks on EMD."
     });
     summary.addRow({
         metric: "Matched",
@@ -806,7 +849,7 @@ async function writeMappingLogWorkbook(logEntries, stats) {
     ];
     actions.addRow({
         action: "What happened",
-        name: "Switch / behavior / PRD name",
+        name: "Switch / behavior / Local Switch name",
         emdRow: "Row # on EMD",
         affecting: "EMD column C",
         result: "EMD column E",
@@ -883,6 +926,17 @@ async function main() {
         resultData.switches
     );
 
+    const stats = {
+    groupCount,
+    matchedRows,
+    insertedRows
+};
+
+const logJsonPath = writeMappingLogJson(
+    logEntries,
+    stats
+);
+
     const logPathWritten = await writeMappingLogWorkbook(logEntries, {
         groupCount,
         matchedRows,
@@ -905,7 +959,11 @@ async function main() {
     );
 }
 
-main().catch((error) => {
-    console.error("Error:", error.message);
-    process.exitCode = 1;
-});
+module.exports = { main };
+
+if (require.main === module) {
+    main().catch((error) => {
+        console.error("Error:", error.message);
+        process.exitCode = 1;
+    });
+}
