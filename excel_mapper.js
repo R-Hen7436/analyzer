@@ -2,12 +2,31 @@ const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
 const JSZip = require("jszip");
+const { getRunPaths, ensureRunDirs } = require("./output_paths");
 
-const JSON_FILE_PATH = "./result.json";
-const TEMPLATE_PATH = "./renEPC_change_point_list.xlsx";
-const OUTPUT_PATH = "./renEPC_change_point_list_updated.xlsx";
-const LOG_PATH = "./mapping_log.xlsx";
-const LOG_JSON_PATH = "./mapping_log.json";
+const WORKSPACE = process.argv[2];
+const PROFILE_INPUT = process.argv[3];
+
+if (!WORKSPACE || !PROFILE_INPUT) {
+    console.error("Usage:");
+    console.error("  node excel_mapper.js <workspace> <profile>");
+    console.error("");
+    console.error("Example:");
+    console.error(
+        "  node excel_mapper.js ubasrh_KPC02530_2291_matsuri3_mp C2WC_prd_profile"
+    );
+    process.exit(1);
+}
+
+const RUN_PATHS = ensureRunDirs(getRunPaths(WORKSPACE, PROFILE_INPUT));
+
+const JSON_FILE_PATH = RUN_PATHS.resultJson;
+const TEMPLATE_PATH = RUN_PATHS.templateXlsx;
+const OUTPUT_PATH = RUN_PATHS.mapUpdatedXlsx;
+const LOG_PATH = RUN_PATHS.mappingLogXlsx;
+const LOG_JSON_PATH = RUN_PATHS.mappingLogJson;
+const LOCKED_OUTPUT_PATH = RUN_PATHS.mapLockedXlsx;
+const LOCKED_LOG_PATH = RUN_PATHS.mappingLogLockedXlsx;
 const SHEET_NAME = "EMD";
 const HISTORY_NAME = "History";
 const HISTORY_TEMP = "_History_renamed_";
@@ -258,7 +277,7 @@ async function writeOutputWorkbook(workbook, outputPath) {
         return outputPath;
     } catch (error) {
         if (error && error.code === "EBUSY") {
-            const fallback = "./renEPC_change_point_list_Updated_locked.xlsx";
+            const fallback = LOCKED_OUTPUT_PATH;
             fs.writeFileSync(fallback, restored);
             console.error(
                 `${outputPath} is open/locked. Wrote to ${fallback} instead.`
@@ -845,7 +864,7 @@ async function writeMappingLogWorkbook(logEntries, stats) {
         return LOG_PATH;
     } catch (error) {
         if (error && error.code === "EBUSY") {
-            const fallback = "./mapping_log_locked.xlsx";
+            const fallback = LOCKED_LOG_PATH;
             await workbook.xlsx.writeFile(fallback);
             console.error(
                 `${LOG_PATH} is open/locked. Wrote log to ${fallback} instead.`
@@ -873,11 +892,17 @@ function loadResultJson(jsonPath) {
 
 async function main() {
     if (!fs.existsSync(TEMPLATE_PATH)) {
-        throw new Error(`Template not found: ${TEMPLATE_PATH}`);
+        throw new Error(
+            `Template not found: ${TEMPLATE_PATH}\n` +
+                `Place renEPC_change_point_list.xlsx under templates/ or the project root.`
+        );
     }
 
     const resultData = loadResultJson(JSON_FILE_PATH);
     const switchCount = Object.keys(resultData.switches).length;
+    console.log(`Workspace: ${WORKSPACE}`);
+    console.log(`Profile: ${RUN_PATHS.profileName}`);
+    console.log(`Output dir: ${RUN_PATHS.mapDir}`);
     console.log(`Loaded ${switchCount} switches from ${JSON_FILE_PATH}`);
     console.log(`Template: ${TEMPLATE_PATH}`);
     console.log(`Output: ${OUTPUT_PATH}`);

@@ -1,13 +1,10 @@
 const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
+const { getRunPaths, ensureRunDirs } = require("./output_paths");
 
 const WORKSPACE = process.argv[2];
 const PROFILE_INPUT = process.argv[3];
-
-const SCAN_JSON_PATH = "ren_epc_scan_result.json";
-const RESULT_JSON_PATH = "result.json";
-const RESULT_XLSX_PATH = "result.xlsx";
 
 const RESULT = {
     PASS: "O",
@@ -28,6 +25,12 @@ if (!WORKSPACE || !PROFILE_INPUT) {
     console.error("  You can pass profile with or without .mk");
     process.exit(1);
 }
+
+const RUN_PATHS = ensureRunDirs(getRunPaths(WORKSPACE, PROFILE_INPUT));
+
+const SCAN_JSON_PATH = RUN_PATHS.scanJson;
+const RESULT_JSON_PATH = RUN_PATHS.resultJson;
+const RESULT_XLSX_PATH = RUN_PATHS.resultXlsx;
 
 const PROFILE_FILE_NAME = PROFILE_INPUT.endsWith(".mk")
     ? PROFILE_INPUT
@@ -597,6 +600,7 @@ async function main() {
     console.log(`Workspace: ${WORKSPACE}`);
     console.log(`Profile: ${PROFILE_FILE_NAME}`);
     console.log(`Profile path: ${PROFILE_MK_PATH}`);
+    console.log(`Output dir: ${RUN_PATHS.analyzeDir}`);
     console.log(`Scan JSON: ${SCAN_JSON_PATH}`);
     console.log(`Analyzed names: ${summaryRows.length}`);
     console.log(`Results: O=${pass}, X=${fail}, -=${none}`);

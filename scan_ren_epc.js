@@ -1,23 +1,32 @@
 const fs = require("fs");
 const path = require("path");
+const { getRunPaths, ensureRunDirs } = require("./output_paths");
 
 const WORKSPACE = process.argv[2];
+const PROFILE_INPUT = process.argv[3];
 
-if (!WORKSPACE) {
+if (!WORKSPACE || !PROFILE_INPUT) {
     console.error("Usage:");
-    console.error("  node scan_ren_epc.js <workspace>");
+    console.error("  node scan_ren_epc.js <workspace> <profile>");
     console.error("");
     console.error("Example:");
-    console.error("  node scan_ren_epc.js ubasrh_KPC02530_2291_matsuri3_mp");
+    console.error(
+        "  node scan_ren_epc.js ubasrh_KPC02530_2291_matsuri3_mp C2WC_prd_profile"
+    );
+    console.error("");
+    console.error("Note:");
+    console.error("  Profile is used for output folder organization only.");
     process.exit(1);
 }
+
+const RUN_PATHS = ensureRunDirs(getRunPaths(WORKSPACE, PROFILE_INPUT));
 
 const REN_EPC_DIRS = [
     `/data1/p4work/${WORKSPACE}/stream_reference/core_parts/subsys_PLP/platform_element/ren/ren_epc`,
     `/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/platform_element/ren/ren_epc`
 ];
 
-const OUTPUT_JSON = "ren_epc_scan_result.json";
+const OUTPUT_JSON = RUN_PATHS.scanJson;
 const LOCAL_SWITCH_CONFIG_PATH = path.join(
     __dirname,
     "config",
@@ -449,6 +458,8 @@ function main() {
     const localSwitchPatterns = buildLocalSwitchPatterns(localSwitchNames);
 
     console.log(`Workspace: ${WORKSPACE}`);
+    console.log(`Profile: ${RUN_PATHS.profileName}`);
+    console.log(`Output dir: ${RUN_PATHS.scanDir}`);
     console.log(`Scanning: ${REN_EPC_DIRS}`);
     console.log(`Local switches loaded: ${localSwitchNames.length}`);
     console.log(`Local switch config: ${LOCAL_SWITCH_CONFIG_PATH}`);

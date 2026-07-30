@@ -1,6 +1,6 @@
 const { spawn } = require("child_process");
 const path = require("path");
-const excelMapper = require("./excel_mapper");
+const { getRunPaths, ensureRunDirs } = require("./output_paths");
 
 const WORKSPACE = process.argv[2];
 const PROFILE_INPUT = process.argv[3];
@@ -15,6 +15,8 @@ if (!WORKSPACE || !PROFILE_INPUT) {
     );
     process.exit(1);
 }
+
+const RUN_PATHS = ensureRunDirs(getRunPaths(WORKSPACE, PROFILE_INPUT));
 
 function runNodeScript(scriptName, args) {
     return new Promise((resolve, reject) => {
@@ -46,11 +48,13 @@ function runNodeScript(scriptName, args) {
 
 async function main() {
     try {
+        console.log(`Output root: ${RUN_PATHS.runRoot}`);
+
         console.log("=================================");
         console.log("Step 1: Scanning ren_epc");
         console.log("=================================");
 
-        await runNodeScript("scan_ren_epc.js", [WORKSPACE]);
+        await runNodeScript("scan_ren_epc.js", [WORKSPACE, PROFILE_INPUT]);
 
         console.log("\n=================================");
         console.log("Step 2: Analyzing profile from scan");
@@ -65,10 +69,11 @@ async function main() {
         console.log("Step 3: Running excel mapper");
         console.log("=================================");
 
-        await excelMapper.main();
+        await runNodeScript("excel_mapper.js", [WORKSPACE, PROFILE_INPUT]);
 
         console.log("\n=================================");
         console.log("Completed successfully");
+        console.log(`Results: ${RUN_PATHS.runRoot}`);
         console.log("=================================");
     } catch (error) {
         console.error("\nExecution failed:");
