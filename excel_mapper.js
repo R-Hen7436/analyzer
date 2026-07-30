@@ -1,36 +1,3 @@
-/*
-
-SUMMARY:
-  Same mapping flow as nochange, but ASCII-only to avoid UTF corruption.
-  Result symbols are O / X / - (not ï¿½ï¿½ / ï¿½ï¿½). Affecting text has no ï¿½ï¿½ prefix.
-  Still writes into existing column E (no column insert).
-  Template: renEPC_change_point_list.xlsx ï¿½ï¿½ renEPC_change_point_list_updated.xlsx.
-
-Phase 2 ? Map analyzer result.json into renEPC_change_point_list.xlsx sheet EMD.
-
-  Inputs:  result.json + renEPC_change_point_list.xlsx (EMD)
-  Outputs: renEPC_change_point_list_Updated.xlsx
-           mapping_log.xlsx  (separate investigation log ? no extra sheets
-                              inside renEPC_change_point_list_Updated.xlsx)
-
-  Each run rebuilds from clean renEPC_change_point_list.xlsx and overwrites renEPC_change_point_list_Updated.xlsx.
-
-Column map (aligned with result.xlsx Impact):
-  B = Name
-  C = Affecting header/function
-  E = Result (O / X / -)
-
-Rules: see docs/emd_mapping.md
-
-  Maps UVP_SW_*, BEHAVIOR_MODE_IF_*, and Local Switch
-  sections. VCP and PRD_SW remain out of scope.
-
-ExcelJS workaround:
-  Sheet name "History" is protected by ExcelJS. Before load/save we temporarily
-  rename it to "_History_renamed_" inside xl/workbook.xml via JSZip, then restore
-  "History" on write.
-*/
-
 const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
@@ -148,7 +115,7 @@ function functionToken(raw) {
 function parseEmdAffecting(raw) {
     const cleaned = cellText(raw)
         .replace(/^\u25A0/, "")
-        .replace(/^ï¿½ï¿½/, "")
+        .replace(/^/, "")
         .trim();
 
     if (!cleaned) {
@@ -307,33 +274,33 @@ async function writeOutputWorkbook(workbook, outputPath) {
 function detectSection(bText, current) {
     const text = bText.trim();
 
-    if (text === "â– UVP" || text === "UVP") {
+    if (text === "UVP" || text === "UVP") {
         return SECTION.UVP;
     }
 
-    if (text === "â– VCP" || text === "VCP") {
+    if (text === "VCP" || text === "VCP") {
         return SECTION.VCP;
     }
 
     if (
-        text === "â– Behavior Mode" ||
+        text === "Behavior Mode" ||
         text === "Behavior Mode" ||
-        /^â– ?\s*Behavior\s*Mode$/i.test(text)
+        /^?\s*Behavior\s*Mode$/i.test(text)
     ) {
         return SECTION.BEHAVIOR;
     }
 
-    // EMD: "Local Switch" â€” analyzer kind=local_switch
+    // EMD: "Local Switch" ? analyzer kind=local_switch
     if (
         text === "Local Switch" ||
-        text === "â– Local Switch" ||
-        /^â– ?\s*Local\s+Switch$/i.test(text)
+        text === "Local Switch" ||
+        /^?\s*Local\s+Switch$/i.test(text)
     ) {
         return SECTION.LOCAL_SWITCH;
     }
 
-    // Separate model list under â– PRD_SW â€” out of scope (not in local_switch.json)
-    if (text === "â– PRD_SW" || text === "PRD_SW") {
+    // Separate model list under PRD_SW ? out of scope (not in local_switch.json)
+    if (text === "PRD_SW" || text === "PRD_SW") {
         return SECTION.PRD_SW;
     }
 
@@ -343,17 +310,17 @@ function detectSection(bText, current) {
 function isSectionMarker(bText) {
     const text = bText.trim();
     return (
-        text === "â– UVP" ||
-        text === "â– VCP" ||
-        text === "â– Behavior Mode" ||
-        text === "â– PRD_SW" ||
+        text === "UVP" ||
+        text === "VCP" ||
+        text === "Behavior Mode" ||
+        text === "PRD_SW" ||
         text === "Local Switch" ||
-        text === "â– Local Switch" ||
+        text === "Local Switch" ||
         text === "UVP" ||
         text === "VCP" ||
         text === "PRD_SW" ||
-        /^â– ?\s*Behavior\s*Mode$/i.test(text) ||
-        /^â– ?\s*Local\s+Switch$/i.test(text)
+        /^?\s*Behavior\s*Mode$/i.test(text) ||
+        /^?\s*Local\s+Switch$/i.test(text)
     );
 }
 
@@ -533,17 +500,19 @@ function applyMapping(worksheet, switches) {
 
         if (!entry) {
             for (const rowNumber of group.rows) {
-                const cText = cellText(
-                    worksheet.getRow(rowNumber).getCell(3).value
-                );
+                const row = worksheet.getRow(rowNumber);
+                const cText = cellText(row.getCell(3).value);
                 if (cText.trim()) {
+                    writeResultCell(row, "-");
+                    matchedRows += 1;
+
                     pushLog(logEntries, {
                         action: "Orphan",
                         name: group.name,
                         emdRow: rowNumber,
                         affecting: cText,
-                        result: "",
-                        reason: "Name not present in result.json; E left unchanged"
+                        result: "-",
+                        reason: "Name not present in result.json; wrote - on E"
                     });
                 }
             }
@@ -571,17 +540,18 @@ function applyMapping(worksheet, switches) {
             });
 
             for (const rowNumber of group.rows) {
-                const cText = cellText(
-                    worksheet.getRow(rowNumber).getCell(3).value
-                );
+                const row = worksheet.getRow(rowNumber);
+                const cText = cellText(row.getCell(3).value);
                 if (cText.trim()) {
+                    writeResultCell(row, "-");
+
                     pushLog(logEntries, {
                         action: "Orphan",
                         name: group.name,
                         emdRow: rowNumber,
                         affecting: cText,
-                        result: "",
-                        reason: "Analyzer Not Found; template impact left unchanged"
+                        result: "-",
+                        reason: "Analyzer Not Found; wrote - on E for template impact"
                     });
                 }
             }
@@ -630,13 +600,16 @@ function applyMapping(worksheet, switches) {
                     reason: `Matched analyzer impact ${matched.file}${matched.functionToken ? " / " + matched.functionToken : ""}; wrote E`
                 });
             } else {
+                writeResultCell(row, "-");
+                matchedRows += 1;
+
                 pushLog(logEntries, {
                     action: "Orphan",
                     name: group.name,
                     emdRow: rowNumber,
                     affecting: cText,
-                    result: "",
-                    reason: "No matching analyzer impact; E left unchanged"
+                    result: "-",
+                    reason: "No matching analyzer impact; wrote - on E"
                 });
             }
         }
@@ -731,7 +704,7 @@ function writeGuideSheet(workbook) {
             topic: "Column",
             item: "Result",
             description:
-                "Symbol written to EMD column E: O / X / -. Empty when E was left unchanged (Orphan)."
+                "Symbol written to EMD column E: O / X / -. Orphan rows also get - when C has no matching analyzer impact."
         },
         {
             topic: "Column",
@@ -760,7 +733,7 @@ function writeGuideSheet(workbook) {
             topic: "Action type",
             item: "Orphan",
             description:
-                "EMD C row with no analyzer match; E left unchanged."
+                "EMD C row with no analyzer match (or name missing from result.json); wrote - into E."
         },
         {
             topic: "Action type",
@@ -823,7 +796,7 @@ async function writeMappingLogWorkbook(logEntries, stats) {
     summary.addRow({
         metric: "Orphan",
         value: logEntries.filter((e) => e.action === "Orphan").length,
-        description: "Template C rows with no analyzer match."
+        description: "Template C rows with no analyzer match; E set to -."
     });
     summary.addRow({
         metric: "NotFound",
