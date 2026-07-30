@@ -171,6 +171,59 @@ function buildNotes(kind, profileValue, occurrenceCount) {
     return "Switch found in ren_epc but missing from profile";
 }
 
+function buildUniqueImpacts(locations) {
+    if (!locations || locations.length === 0) {
+        return [
+            {
+                file: "Not Found",
+                function: ""
+            }
+        ];
+    }
+
+    return [
+        ...new Map(
+            locations.map((location) => {
+                const file = location.file || "";
+                const functionName = location.function || location.functionName || "";
+
+                return [
+                    `${file} | ${functionName}`,
+                    {
+                        file,
+                        function: functionName
+                    }
+                ];
+            })
+        ).values()
+    ].sort((a, b) =>
+        `${a.file} | ${a.function}`.localeCompare(
+            `${b.file} | ${b.function}`
+        )
+    );
+}
+
+function buildImpactRowsForName(name, result, impacts) {
+    if (
+        impacts.length === 0 ||
+        (impacts.length === 1 && impacts[0].file === "Not Found")
+    ) {
+        return [
+            {
+                Name: name,
+                "Affecting Header/Function": "Not Found",
+                Result: result
+            }
+        ];
+    }
+
+    return impacts.map((impact) => ({
+        Name: name,
+        "Affecting Header/Function": `${impact.file} | ${impact.function}`,
+        Result: result
+    }));
+}
+
 function buildRows(scanResult, profileValues) {
     const summaryRows = [];
     const detailRows = [];
@@ -207,10 +260,8 @@ function buildRows(scanResult, profileValues) {
             notes
         });
 
-        const impacts = [];
-
         for (const location of locations) {
-            const detailRow = {
+            detailRows.push({
                 kind,
                 name,
                 profile: profileValue || "NOT_FOUND",
@@ -221,47 +272,19 @@ function buildRows(scanResult, profileValues) {
                 functionName: location.function || "",
                 result,
                 code: location.code || ""
-            };
-
-            detailRows.push(detailRow);
-
-            impacts.push({
-                stream: detailRow.stream,
-                file: detailRow.file,
-                fileType: detailRow.fileType,
-                line: detailRow.line,
-                function: detailRow.functionName,
-                code: detailRow.code
-            });
-
-            impactRows.push({
-                name,
-                stream: detailRow.stream,
-                file: detailRow.file,
-                fileType: detailRow.fileType,
-                line: detailRow.line,
-                functionName: detailRow.functionName,
-                result
             });
         }
+
+        const impacts = buildUniqueImpacts(locations);
+
+        impactRows.push(...buildImpactRowsForName(name, result, impacts));
 
         resultSwitches[name] = {
             kind,
             profile: profileValue || "NOT_FOUND",
             result,
             occurrenceCount: locations.length,
-            impacts: impacts.length > 0
-                ? impacts
-                : [
-                    {
-                        stream: "",
-                        file: "Not Found",
-                        fileType: "",
-                        line: "",
-                        function: "",
-                        code: ""
-                    }
-                ]
+            impacts
         };
     }
 
@@ -276,6 +299,7 @@ function buildRows(scanResult, profileValues) {
         }
 
         const profileValue = profileValues[profileName];
+        const impacts = buildUniqueImpacts([]);
 
         summaryRows.push({
             kind: "uvp",
@@ -287,21 +311,16 @@ function buildRows(scanResult, profileValues) {
             notes: "Defined in profile but not found in ren_epc scan result"
         });
 
+        impactRows.push(
+            ...buildImpactRowsForName(profileName, RESULT.NONE, impacts)
+        );
+
         resultSwitches[profileName] = {
             kind: "uvp",
             profile: profileValue || "NOT_FOUND",
             result: RESULT.NONE,
             occurrenceCount: 0,
-            impacts: [
-                {
-                    stream: "",
-                    file: "Not Found",
-                    fileType: "",
-                    line: "",
-                    function: "",
-                    code: ""
-                }
-            ]
+            impacts
         };
     }
 
@@ -399,7 +418,8 @@ function writeSheetRows(worksheet, headers, rows, resultColumnName) {
         Code: 80,
         Notes: 60,
         Stream: 16,
-        "File Type": 14
+        "File Type": 14,
+        "Affecting Header/Function": 80
     };
 
     for (const [header, width] of Object.entries(widthMap)) {
@@ -448,11 +468,7 @@ async function writeExcelReport(summaryRows, detailRows, impactRows) {
 
     const impactHeaders = [
         "Name",
-        "Stream",
-        "File",
-        "File Type",
-        "Line",
-        "Function",
+        "Affecting Header/Function",
         "Result"
     ];
 
@@ -484,15 +500,7 @@ async function writeExcelReport(summaryRows, detailRows, impactRows) {
     writeSheetRows(
         impactSheet,
         impactHeaders,
-        impactRows.map((row) => ({
-            Name: row.name,
-            Stream: row.stream,
-            File: row.file,
-            "File Type": row.fileType,
-            Line: row.line,
-            Function: row.functionName,
-            Result: row.result
-        })),
+        impactRows,
         "Result"
     );
 
