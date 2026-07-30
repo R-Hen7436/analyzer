@@ -18,6 +18,11 @@ const REN_EPC_DIRS = [
 ];
 
 const OUTPUT_JSON = "ren_epc_scan_result.json";
+const LOCAL_SWITCH_CONFIG_PATH = path.join(
+    __dirname,
+    "config",
+    "local_switch.json"
+);
 
 const TOKEN_PATTERNS = [
     {
@@ -41,6 +46,42 @@ const SKIP_DIRS = new Set([
 ]);
 
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function loadLocalSwitches(configPath) {
+    if (!fs.existsSync(configPath)) {
+        throw new Error(`Local switch config not found: ${configPath}`);
+    }
+
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const names = config.LOCAL_SWITCH || [];
+    const seen = new Set();
+    const ordered = [];
+
+    for (const name of names) {
+        const trimmed = String(name || "").trim();
+
+        if (!trimmed || seen.has(trimmed)) {
+            continue;
+        }
+
+        seen.add(trimmed);
+        ordered.push(trimmed);
+    }
+
+    return ordered;
+}
+
+function buildLocalSwitchPatterns(localSwitchNames) {
+    return localSwitchNames.map((name) => ({
+        kind: "local_switch",
+        name,
+        regex: new RegExp(`\\b${escapeRegExp(name)}\\b`, "g")
+    }));
+}
 
 function getFileType(filePath) {
     const baseName = path.basename(filePath);
@@ -174,11 +215,7 @@ function buildFunctionIndex(lines) {
     return functions;
 }
 
-function findEnclosingFunction(functions, lineIndex, filePath) {
-    if (filePath.endsWith(".mk") || path.basename(filePath) === "Makefile") {
-        return findMakefileContext;
-    }
-
+function findEnclosingFunction(functions, lineIndex) {
     let enclosingFunction = null;
 
     for (const fn of functions) {
@@ -214,7 +251,6 @@ function findMakefileContext(lines, lineIndex) {
 }
 
 function getRelativePath(filePath) {
-
     const referenceRoot =
         `/data1/p4work/${WORKSPACE}/stream_reference/core_parts/subsys_PLP/platform_element/ren/ren_epc`;
 
@@ -240,9 +276,16 @@ function getRelativePath(filePath) {
         path: filePath
     };
 }
-``
 
-function scanFile(filePath) {
+function resolveFunctionName(filePath, lines, lineIndex, functions) {
+    if (filePath.endsWith(".mk") || path.basename(filePath) === "Makefile") {
+        return findMakefileContext(lines, lineIndex);
+    }
+
+    return findEnclosingFunction(functions, lineIndex);
+}
+
+function scanFile(filePath, localSwitchPatterns) {
     const relativeInfo = getRelativePath(filePath);
     const relativeFile = relativeInfo.path;
     const stream = relativeInfo.stream;
@@ -250,34 +293,50 @@ function scanFile(filePath) {
     const content = fs.readFileSync(filePath, "utf8");
     const lines = content.split(/\r?\n/);
     const functions = buildFunctionIndex(lines);
-
     const occurrences = [];
 
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
         const line = lines[lineIndex];
+        const functionName = resolveFunctionName(
+            filePath,
+            lines,
+            lineIndex,
+            functions
+        );
 
         for (const patternInfo of TOKEN_PATTERNS) {
             patternInfo.regex.lastIndex = 0;
 
             let match;
             while ((match = patternInfo.regex.exec(line)) !== null) {
-                const token = match[0];
-
-                const functionName =
-                    filePath.endsWith(".mk") || path.basename(filePath) === "Makefile"
-                        ? findMakefileContext(lines, lineIndex)
-                        : findEnclosingFunction(functions, lineIndex, filePath);
-
                 occurrences.push({
-                name: token,
-                kind: patternInfo.kind,
-                stream,
-                file: relativeFile,
-                fileType,
-                line: lineIndex + 1,
-                function: functionName,
-                code: line.trim()
-            });
+                    name: match[0],
+                    kind: patternInfo.kind,
+                    stream,
+                    file: relativeFile,
+                    fileType,
+                    line: lineIndex + 1,
+                    function: functionName,
+                    code: line.trim()
+                });
+            }
+        }
+
+        for (const patternInfo of localSwitchPatterns) {
+            patternInfo.regex.lastIndex = 0;
+
+            let match;
+            while ((match = patternInfo.regex.exec(line)) !== null) {
+                occurrences.push({
+                    name: patternInfo.name,
+                    kind: patternInfo.kind,
+                    stream,
+                    file: relativeFile,
+                    fileType,
+                    line: lineIndex + 1,
+                    function: functionName,
+                    code: line.trim()
+                });
             }
         }
     }
@@ -285,7 +344,27 @@ function scanFile(filePath) {
     return occurrences;
 }
 
-function buildJsonReport(workspace, renEpcDir, files, occurrences) {
+function ensureMasterLocalSwitches(byName, localSwitchNames) {
+    for (const name of localSwitchNames) {
+        if (byName[name]) {
+            continue;
+        }
+
+        byName[name] = {
+            kind: "local_switch",
+            occurrenceCount: 0,
+            locations: []
+        };
+    }
+}
+
+function buildJsonReport(
+    workspace,
+    renEpcDir,
+    files,
+    occurrences,
+    localSwitchNames
+) {
     const byName = {};
 
     for (const occurrence of occurrences) {
@@ -299,6 +378,7 @@ function buildJsonReport(workspace, renEpcDir, files, occurrences) {
 
         byName[occurrence.name].occurrenceCount += 1;
         byName[occurrence.name].locations.push({
+            stream: occurrence.stream,
             file: occurrence.file,
             fileType: occurrence.fileType,
             line: occurrence.line,
@@ -307,11 +387,18 @@ function buildJsonReport(workspace, renEpcDir, files, occurrences) {
         });
     }
 
+    ensureMasterLocalSwitches(byName, localSwitchNames);
+
     const sortedNames = Object.keys(byName).sort();
     const sortedByName = {};
 
     for (const name of sortedNames) {
         byName[name].locations.sort((a, b) => {
+            const streamCompare = (a.stream || "").localeCompare(b.stream || "");
+            if (streamCompare !== 0) {
+                return streamCompare;
+            }
+
             const fileCompare = a.file.localeCompare(b.file);
             if (fileCompare !== 0) {
                 return fileCompare;
@@ -323,16 +410,29 @@ function buildJsonReport(workspace, renEpcDir, files, occurrences) {
         sortedByName[name] = byName[name];
     }
 
+    const localSwitchCount = localSwitchNames.length;
+    const localSwitchFoundCount = localSwitchNames.filter(
+        (name) => (sortedByName[name]?.occurrenceCount || 0) > 0
+    ).length;
+
     return {
         generatedAt: new Date().toISOString(),
         workspace,
         renEpcDir,
+        localSwitchConfigPath: LOCAL_SWITCH_CONFIG_PATH,
         scannedFileCount: files.length,
         occurrenceCount: occurrences.length,
         uniqueNameCount: sortedNames.length,
         summary: {
-            uvpCount: sortedNames.filter((name) => name.startsWith("UVP_SW_")).length,
-            behaviorCount: sortedNames.filter((name) => name.startsWith("BEHAVIOR_MODE_IF_")).length
+            uvpCount: sortedNames.filter(
+                (name) => sortedByName[name].kind === "uvp"
+            ).length,
+            behaviorCount: sortedNames.filter(
+                (name) => sortedByName[name].kind === "behavior"
+            ).length,
+            localSwitchCount,
+            localSwitchFoundCount,
+            localSwitchMissingCount: localSwitchCount - localSwitchFoundCount
         },
         switches: sortedByName
     };
@@ -345,8 +445,13 @@ function main() {
         }
     }
 
+    const localSwitchNames = loadLocalSwitches(LOCAL_SWITCH_CONFIG_PATH);
+    const localSwitchPatterns = buildLocalSwitchPatterns(localSwitchNames);
+
     console.log(`Workspace: ${WORKSPACE}`);
     console.log(`Scanning: ${REN_EPC_DIRS}`);
+    console.log(`Local switches loaded: ${localSwitchNames.length}`);
+    console.log(`Local switch config: ${LOCAL_SWITCH_CONFIG_PATH}`);
 
     const files = [];
 
@@ -359,7 +464,7 @@ function main() {
     const allOccurrences = [];
 
     for (const filePath of files) {
-        const occurrences = scanFile(filePath);
+        const occurrences = scanFile(filePath, localSwitchPatterns);
         allOccurrences.push(...occurrences);
     }
 
@@ -367,7 +472,8 @@ function main() {
         WORKSPACE,
         REN_EPC_DIRS,
         files,
-        allOccurrences
+        allOccurrences,
+        localSwitchNames
     );
 
     fs.writeFileSync(
@@ -380,6 +486,9 @@ function main() {
     console.log(`Unique names found: ${report.uniqueNameCount}`);
     console.log(`UVP_SW_ count: ${report.summary.uvpCount}`);
     console.log(`BEHAVIOR_MODE_IF_ count: ${report.summary.behaviorCount}`);
+    console.log(
+        `Local switch found/missing: ${report.summary.localSwitchFoundCount}/${report.summary.localSwitchMissingCount}`
+    );
     console.log(`Wrote: ${OUTPUT_JSON}`);
 }
 

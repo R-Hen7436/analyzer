@@ -118,6 +118,10 @@ function pairedSwitchNameFromBehavior(behaviorName) {
 }
 
 function getProfileValueForName(name, kind, profileValues) {
+    if (kind === "local_switch") {
+        return null;
+    }
+
     if (kind === "behavior") {
         const pairedSwitch = pairedSwitchNameFromBehavior(name);
 
@@ -131,7 +135,19 @@ function getProfileValueForName(name, kind, profileValues) {
     return profileValues[name] || null;
 }
 
-function evaluateResult(profileValue, occurrenceCount) {
+function formatProfileDisplay(kind, profileValue) {
+    if (kind === "local_switch") {
+        return "N/A";
+    }
+
+    return profileValue || "NOT_FOUND";
+}
+
+function evaluateResult(kind, profileValue, occurrenceCount) {
+    if (kind === "local_switch") {
+        return occurrenceCount > 0 ? RESULT.PASS : RESULT.NONE;
+    }
+
     if (!occurrenceCount || occurrenceCount === 0) {
         return RESULT.NONE;
     }
@@ -144,8 +160,20 @@ function evaluateResult(profileValue, occurrenceCount) {
 }
 
 function buildNotes(kind, profileValue, occurrenceCount) {
+    if (kind === "local_switch") {
+        if (!occurrenceCount || occurrenceCount === 0) {
+            return "Local Switch not found in renEPC files";
+        }
+
+        return "Local Switch found in renEPC files";
+    }
+
     if (!occurrenceCount || occurrenceCount === 0) {
-        return "Name exists in profile but was not found in ren_epc scan result";
+        if (kind === "behavior") {
+            return "Behavior not found in ren_epc scan result";
+        }
+
+        return "Switch not found in ren_epc scan result";
     }
 
     if (kind === "behavior") {
@@ -236,12 +264,17 @@ function buildRows(scanResult, profileValues) {
     for (const name of namesFromScan) {
         const scanEntry = scanSwitches[name];
         const kind = scanEntry.kind || (
-            name.startsWith("BEHAVIOR_MODE_IF_") ? "behavior" : "uvp"
+            name.startsWith("BEHAVIOR_MODE_IF_")
+                ? "behavior"
+                : name.startsWith("UVP_SW_")
+                    ? "uvp"
+                    : "local_switch"
         );
 
         const locations = scanEntry.locations || [];
         const profileValue = getProfileValueForName(name, kind, profileValues);
-        const result = evaluateResult(profileValue, locations.length);
+        const profileDisplay = formatProfileDisplay(kind, profileValue);
+        const result = evaluateResult(kind, profileValue, locations.length);
         const notes = buildNotes(kind, profileValue, locations.length);
 
         const functions = [
@@ -253,7 +286,7 @@ function buildRows(scanResult, profileValues) {
         summaryRows.push({
             kind,
             name,
-            profile: profileValue || "NOT_FOUND",
+            profile: profileDisplay,
             occurrenceCount: locations.length,
             functions,
             result,
@@ -264,7 +297,7 @@ function buildRows(scanResult, profileValues) {
             detailRows.push({
                 kind,
                 name,
-                profile: profileValue || "NOT_FOUND",
+                profile: profileDisplay,
                 stream: location.stream || "",
                 file: location.file || "",
                 fileType: location.fileType || "",
@@ -281,7 +314,7 @@ function buildRows(scanResult, profileValues) {
 
         resultSwitches[name] = {
             kind,
-            profile: profileValue || "NOT_FOUND",
+            profile: profileDisplay,
             result,
             occurrenceCount: locations.length,
             impacts
