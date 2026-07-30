@@ -1,7 +1,6 @@
 const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
-const { writeExcelFileWithBusyCheck } = require("./write_with_busy_check");
 
 const WORKSPACE = process.argv[2];
 const PROFILE_INPUT = process.argv[3];
@@ -544,7 +543,7 @@ async function writeExcelReport(summaryRows, detailRows, impactRows) {
         }
     ];
 
-    await writeExcelFileWithBusyCheck(workbook, RESULT_XLSX_PATH);
+    await workbook.xlsx.writeFile(RESULT_XLSX_PATH);
 }
 
 function writeJsonReport(scanResult, profileValues, resultSwitches) {

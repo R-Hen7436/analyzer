@@ -2,10 +2,6 @@ const fs = require("fs");
 const path = require("path");
 const ExcelJS = require("exceljs");
 const JSZip = require("jszip");
-const {
-    writeFileSyncWithBusyCheck,
-    writeExcelFileWithBusyCheck
-} = require("./write_with_busy_check");
 
 const JSON_FILE_PATH = "./result.json";
 const TEMPLATE_PATH = "./renEPC_change_point_list.xlsx";
@@ -257,8 +253,21 @@ async function writeOutputWorkbook(workbook, outputPath) {
         HISTORY_NAME
     );
 
-    writeFileSyncWithBusyCheck(outputPath, restored);
-    return outputPath;
+    try {
+        fs.writeFileSync(outputPath, restored);
+        return outputPath;
+    } catch (error) {
+        if (error && error.code === "EBUSY") {
+            const fallback = "./renEPC_change_point_list_Updated_locked.xlsx";
+            fs.writeFileSync(fallback, restored);
+            console.error(
+                `${outputPath} is open/locked. Wrote to ${fallback} instead.`
+            );
+            return fallback;
+        }
+
+        throw error;
+    }
 }
 
 function detectSection(bText, current) {
@@ -831,8 +840,21 @@ async function writeMappingLogWorkbook(logEntries, stats) {
     actions.getRow(1).font = { bold: true };
     actions.views = [{ state: "frozen", ySplit: 2 }];
 
-    await writeExcelFileWithBusyCheck(workbook, LOG_PATH);
-    return LOG_PATH;
+    try {
+        await workbook.xlsx.writeFile(LOG_PATH);
+        return LOG_PATH;
+    } catch (error) {
+        if (error && error.code === "EBUSY") {
+            const fallback = "./mapping_log_locked.xlsx";
+            await workbook.xlsx.writeFile(fallback);
+            console.error(
+                `${LOG_PATH} is open/locked. Wrote log to ${fallback} instead.`
+            );
+            return fallback;
+        }
+
+        throw error;
+    }
 }
 
 function loadResultJson(jsonPath) {
