@@ -57,6 +57,9 @@ function writeMappingLogJson(logEntries, stats) {
             orphans: logEntries.filter(
                 (e) => e.action === "Orphan"
             ).length,
+            createdNameBlocks: logEntries.filter(
+                (e) => e.action === "CreatedNameBlock"
+            ).length,
             notFound: logEntries.filter(
                 (e) => e.action === "NotFound"
             ).length,
@@ -104,6 +107,67 @@ function basenameFile(filePath) {
     }
 
     return path.basename(String(filePath).replace(/\\/g, "/")).trim();
+}
+
+function isMakefileName(fileName) {
+    return /^Makefile$/i.test(String(fileName || "").trim());
+}
+
+/*
+ * Makefile paths are collapsed to basename elsewhere, which makes
+ * epc_test/make_client/Makefile and epc_test/make_server/Makefile look identical.
+ * Keep parent/Makefile for this file only; all other files stay basename-only.
+ */
+function emdFileLabel(filePath) {
+    const normalized = normalizeImpactFile(filePath);
+
+    if (!normalized) {
+        return "";
+    }
+
+    if (/^Not Found$/i.test(normalized)) {
+        return "Not Found";
+    }
+
+    const base = path.basename(normalized);
+
+    if (!isMakefileName(base)) {
+        return base;
+    }
+
+    const parts = normalized.split("/").filter(Boolean);
+
+    if (parts.length >= 2) {
+        return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+    }
+
+    return base;
+}
+
+function makefileMatchKey(fileLabel) {
+    const normalized = normalizeImpactFile(fileLabel);
+
+    if (!normalized) {
+        return "";
+    }
+
+    if (/^Make\s+file$/i.test(normalized)) {
+        return "makefile";
+    }
+
+    const base = path.basename(normalized);
+
+    if (!isMakefileName(base)) {
+        return normalized.toLowerCase();
+    }
+
+    const parts = normalized.split("/").filter(Boolean);
+
+    if (parts.length >= 2) {
+        return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`.toLowerCase();
+    }
+
+    return "makefile";
 }
 
 function functionToken(raw) {
@@ -158,23 +222,16 @@ function parseEmdAffecting(raw) {
     }
 
     return {
-        file: basenameFile(filePart),
+        file: filePart.trim(),
         functionToken: functionToken(funcPart),
         raw: cleaned
     };
 }
 
-function parseAnalyzerImpact(impact) {
-    const file = basenameFile(impact.file);
-    const isNotFound = file === "Not Found" || !file;
-
-    return {
-        file: isNotFound ? "Not Found" : file,
-        functionToken: isNotFound ? "" : functionToken(impact.function),
-        rawFunction: impact.function || "",
-        isNotFound,
-        source: impact
-    };
+function normalizeImpactFile(file) {
+    return String(file || "")
+        .replace(/\\/g, "/")
+        .trim();
 }
 
 function impactsMatch(emdParsed, analyzerParsed) {
@@ -186,7 +243,18 @@ function impactsMatch(emdParsed, analyzerParsed) {
         return false;
     }
 
-    if (emdParsed.file.toLowerCase() !== analyzerParsed.file.toLowerCase()) {
+    const emdFile = normalizeImpactFile(emdParsed.file);
+    const analyzerFile = normalizeImpactFile(analyzerParsed.file);
+    const emdIsMakefile =
+        isMakefileName(path.basename(emdFile)) ||
+        /^Make\s+file$/i.test(emdFile);
+    const analyzerIsMakefile = isMakefileName(path.basename(analyzerFile));
+
+    if (emdIsMakefile || analyzerIsMakefile) {
+        if (makefileMatchKey(emdFile) !== makefileMatchKey(analyzerFile)) {
+            return false;
+        }
+    } else if (emdFile.toLowerCase() !== analyzerFile.toLowerCase()) {
         return false;
     }
 
@@ -205,19 +273,20 @@ function impactsMatch(emdParsed, analyzerParsed) {
 }
 
 function formatEmdAffecting(impact) {
-    const file = basenameFile(impact.file);
+    const file = emdFileLabel(impact.file);
 
     if (!file || file === "Not Found") {
         return "Not Found";
     }
 
     const token = functionToken(impact.function);
+    const markedFile = `\u25A0${file}`;
 
     if (!token) {
-        return file;
+        return markedFile;
     }
 
-    return `${file}\n${token}()`;
+    return `${markedFile}\n${token}()`;
 }
 
 function mapResultSymbol(result) {
@@ -292,18 +361,18 @@ async function writeOutputWorkbook(workbook, outputPath) {
 function detectSection(bText, current) {
     const text = bText.trim();
 
-    if (text === "UVP" || text === "UVP") {
+    if (text === "¢£UVP" || text === "UVP") {
         return SECTION.UVP;
     }
 
-    if (text === "VCP" || text === "VCP") {
+    if (text === "¢£VCP" || text === "VCP") {
         return SECTION.VCP;
     }
 
     if (
-        text === "Behavior Mode" ||
+        text === "¢£Behavior Mode" ||
         text === "Behavior Mode" ||
-        /^?\s*Behavior\s*Mode$/i.test(text)
+        /^¢£?\s*Behavior\s*Mode$/i.test(text)
     ) {
         return SECTION.BEHAVIOR;
     }
@@ -311,14 +380,14 @@ function detectSection(bText, current) {
     // EMD: "Local Switch" ? analyzer kind=local_switch
     if (
         text === "Local Switch" ||
-        text === "Local Switch" ||
-        /^?\s*Local\s+Switch$/i.test(text)
+        text === "¢£Local Switch" ||
+        /^¢£?\s*Local\s+Switch$/i.test(text)
     ) {
         return SECTION.LOCAL_SWITCH;
     }
 
-    // Separate model list under PRD_SW ? out of scope (not in local_switch.json)
-    if (text === "PRD_SW" || text === "PRD_SW") {
+    // Separate model list under ¢£PRD_SW ? out of scope (not in local_switch.json)
+    if (text === "¢£PRD_SW" || text === "PRD_SW") {
         return SECTION.PRD_SW;
     }
 
@@ -328,17 +397,17 @@ function detectSection(bText, current) {
 function isSectionMarker(bText) {
     const text = bText.trim();
     return (
-        text === "UVP" ||
-        text === "VCP" ||
-        text === "Behavior Mode" ||
-        text === "PRD_SW" ||
+        text === "¢£UVP" ||
+        text === "¢£VCP" ||
+        text === "¢£Behavior Mode" ||
+        text === "¢£PRD_SW" ||
         text === "Local Switch" ||
-        text === "Local Switch" ||
+        text === "¢£Local Switch" ||
         text === "UVP" ||
         text === "VCP" ||
         text === "PRD_SW" ||
-        /^?\s*Behavior\s*Mode$/i.test(text) ||
-        /^?\s*Local\s+Switch$/i.test(text)
+        /^¢£?\s*Behavior\s*Mode$/i.test(text) ||
+        /^¢£?\s*Local\s+Switch$/i.test(text)
     );
 }
 
@@ -453,6 +522,108 @@ function collectNameGroups(worksheet) {
     return groups;
 }
 
+function parseAnalyzerImpact(impact) {
+    const file = emdFileLabel(impact.file);
+    const isNotFound = file === "Not Found" || !file;
+
+    return {
+        file: isNotFound ? "Not Found" : file,
+        functionToken: isNotFound ? "" : functionToken(impact.function),
+        rawFunction: impact.function || "",
+        isNotFound,
+        source: impact
+    };
+}
+
+function collectSectionAnchors(groups) {
+    const anchors = {};
+
+    for (const group of groups) {
+        if (
+            !anchors[group.section] ||
+            group.endRow > anchors[group.section].endRow
+        ) {
+            anchors[group.section] = {
+                endRow: group.endRow,
+                styleRow: group.endRow
+            };
+        }
+    }
+
+    return anchors;
+}
+
+function createNameBlock(
+    worksheet,
+    insertRow,
+    switchName,
+    switchEntry,
+    styleRowNumber
+) {
+    const seenMakefileKeys = new Set();
+    const impacts = (switchEntry.impacts || [])
+        .map(parseAnalyzerImpact)
+        .filter((impact) => !impact.isNotFound)
+        .filter((impact) => {
+            if (!isMakefileName(path.basename(impact.file))) {
+                return true;
+            }
+
+            const key = makefileMatchKey(impact.file);
+
+            if (seenMakefileKeys.has(key)) {
+                return false;
+            }
+
+            seenMakefileKeys.add(key);
+            return true;
+        });
+
+    if (impacts.length === 0) {
+        return {
+            insertedRows: 0,
+            firstRow: null
+        };
+    }
+
+    worksheet.spliceRows(
+        insertRow,
+        0,
+        ...impacts.map(() => [])
+    );
+
+    const symbol = mapResultSymbol(switchEntry.result);
+
+    for (let i = 0; i < impacts.length; i++) {
+        const rowNumber = insertRow + i;
+
+        copyRowStyle(
+            worksheet,
+            styleRowNumber,
+            rowNumber
+        );
+
+        const row = worksheet.getRow(rowNumber);
+
+        row.getCell(2).value =
+            i === 0 ? switchName : null;
+
+        row.getCell(3).value =
+            formatEmdAffecting(
+                impacts[i].source
+            );
+
+        writeResultCell(row, symbol);
+
+        row.commit();
+    }
+
+    return {
+        insertedRows: impacts.length,
+        firstRow: insertRow
+    };
+}
+
 function writeResultCell(row, symbol) {
     const cell = row.getCell(RESULT_COL);
     cell.value = symbol;
@@ -489,24 +660,39 @@ function pushLog(logEntries, entry) {
     logEntries.push(entry);
 }
 
+/*
+ * spliceRows shifts every workbook row at/after insertAt downward.
+ * Log entries recorded earlier still hold pre-shift emdRow values ? bump them
+ * so mapping_log stays aligned with the final Updated.xlsx.
+ * Call this after splice, before logging the newly inserted rows themselves.
+ */
+function adjustLogRowsAfterInsert(logEntries, insertAt, insertedCount) {
+    if (!insertedCount || insertedCount < 1) {
+        return;
+    }
+
+    for (const entry of logEntries) {
+        if (typeof entry.emdRow === "number" && entry.emdRow >= insertAt) {
+            entry.emdRow += insertedCount;
+        }
+    }
+}
+
 function applyMapping(worksheet, switches) {
     const logEntries = [];
     const groups = collectNameGroups(worksheet);
+    const sectionAnchors = collectSectionAnchors(groups);
+    const emdNames = new Set(
+            groups.map((group) => group.name)
+        );
 
-    const emdNames = new Set(groups.map((group) => group.name));
+        const missingNames = [];
 
-    for (const name of Object.keys(switches)) {
-        if (!emdNames.has(name)) {
-            pushLog(logEntries, {
-                action: "NameMissingFromEmd",
-                name,
-                emdRow: "",
-                affecting: "",
-                result: mapResultSymbol(switches[name].result),
-                reason: `Name exists in result.json (kind=${switches[name].kind}) but not in EMD; no Name block created`
-            });
+        for (const name of Object.keys(switches)) {
+            if (!emdNames.has(name)) {
+                missingNames.push(name);
+            }
         }
-    }
 
     const ordered = [...groups].sort((a, b) => b.startRow - a.startRow);
 
@@ -606,9 +792,25 @@ function applyMapping(worksheet, switches) {
             if (matchIndex >= 0) {
                 writeResultCell(row, symbol);
                 usedAnalyzer.add(matchIndex);
+
+                // Same Makefile path is one EMD row; consume duplicate analyzer hits.
+                const matched = unmatchedAnalyzer[matchIndex];
+                if (isMakefileName(path.basename(matched.file))) {
+                    const matchedKey = makefileMatchKey(matched.file);
+
+                    for (let index = 0; index < unmatchedAnalyzer.length; index++) {
+                        if (
+                            !usedAnalyzer.has(index) &&
+                            makefileMatchKey(unmatchedAnalyzer[index].file) ===
+                                matchedKey
+                        ) {
+                            usedAnalyzer.add(index);
+                        }
+                    }
+                }
+
                 matchedRows += 1;
 
-                const matched = unmatchedAnalyzer[matchIndex];
                 pushLog(logEntries, {
                     action: "Matched",
                     name: group.name,
@@ -633,11 +835,26 @@ function applyMapping(worksheet, switches) {
         }
 
         const toInsert = [];
+        const insertedMakefileKeys = new Set();
 
         for (let index = 0; index < unmatchedAnalyzer.length; index++) {
-            if (!usedAnalyzer.has(index)) {
-                toInsert.push(unmatchedAnalyzer[index]);
+            if (usedAnalyzer.has(index)) {
+                continue;
             }
+
+            const impact = unmatchedAnalyzer[index];
+
+            if (isMakefileName(path.basename(impact.file))) {
+                const key = makefileMatchKey(impact.file);
+
+                if (insertedMakefileKeys.has(key)) {
+                    continue;
+                }
+
+                insertedMakefileKeys.add(key);
+            }
+
+            toInsert.push(impact);
         }
 
         if (toInsert.length === 0) {
@@ -646,6 +863,7 @@ function applyMapping(worksheet, switches) {
 
         const insertAt = group.endRow + 1;
         worksheet.spliceRows(insertAt, 0, ...toInsert.map(() => []));
+        adjustLogRowsAfterInsert(logEntries, insertAt, toInsert.length);
 
         for (let offset = 0; offset < toInsert.length; offset++) {
             const rowNumber = insertAt + offset;
@@ -670,7 +888,121 @@ function applyMapping(worksheet, switches) {
             });
         }
     }
+    const refreshedGroups =
+    collectNameGroups(worksheet);
 
+    const refreshedAnchors =
+    collectSectionAnchors(
+        refreshedGroups
+    );
+    const sectionOrder = [
+    SECTION.LOCAL_SWITCH,
+    SECTION.BEHAVIOR,
+    SECTION.UVP
+];
+
+for (const section of sectionOrder) {
+    const namesForSection =
+        missingNames.filter((name) => {
+            const entry = switches[name];
+
+            return (
+                (entry.kind === "uvp" &&
+                    section === SECTION.UVP) ||
+                (entry.kind === "behavior" &&
+                    section === SECTION.BEHAVIOR) ||
+                (
+                    entry.kind === "local_switch" &&
+                    section === SECTION.LOCAL_SWITCH
+                )
+            );
+        });
+
+    for (const name of namesForSection) {
+        const entry = switches[name];
+
+        const validImpacts =
+            (entry.impacts || [])
+                .map(parseAnalyzerImpact)
+                .filter(
+                    (impact) =>
+                        !impact.isNotFound
+                );
+
+        if (validImpacts.length === 0) {
+            pushLog(logEntries, {
+                action: "NameMissingFromEmd",
+                name,
+                emdRow: "",
+                affecting: "",
+                result: mapResultSymbol(
+                    entry.result
+                ),
+                reason:
+                    "Name missing from EMD and analyzer impacts are Not Found"
+            });
+
+            continue;
+        }
+
+        const anchor =
+        refreshedAnchors[section];
+
+        if (!anchor) {
+            pushLog(logEntries, {
+                action: "NameMissingFromEmd",
+                name,
+                emdRow: "",
+                affecting: "",
+                result: mapResultSymbol(
+                    entry.result
+                ),
+                reason:
+                    `Section ${section} not found in EMD`
+            });
+
+            continue;
+        }
+
+        const insertAt =
+            anchor.endRow + 1;
+
+        const result =
+            createNameBlock(
+                worksheet,
+                insertAt,
+                name,
+                entry,
+                anchor.styleRow
+            );
+
+        if (result.insertedRows > 0) {
+            adjustLogRowsAfterInsert(
+                logEntries,
+                insertAt,
+                result.insertedRows
+            );
+        }
+
+        anchor.endRow +=
+            result.insertedRows;
+
+        insertedRows +=
+            result.insertedRows;
+
+        pushLog(logEntries, {
+            action: "CreatedNameBlock",
+            name,
+            emdRow: result.firstRow,
+            affecting:`${validImpacts.length} impact(s)`,
+            result: mapResultSymbol(
+                entry.result
+            ),
+            reason:
+                "Name not present in EMD; created new block and inserted impacts"
+        });
+    }
+}
     return { logEntries, matchedRows, insertedRows, groupCount: groups.length };
 }
 
@@ -755,9 +1087,21 @@ function writeGuideSheet(workbook) {
         },
         {
             topic: "Action type",
+            item: "CreatedNameBlock",
+            description:
+                "Name missing from EMD. New Name block was created and impacts inserted."
+        },
+        {
+            topic: "Action type",
             item: "NameMissingFromEmd",
             description:
-                "Name in result.json but no EMD Name block (v1 does not create blocks)."
+                "Name in result.json with no EMD Name block and no creatable impacts (Not Found only, or section missing)."
+        },
+        {
+            topic: "EMD Row",
+            item: "Final-sheet aligned",
+            description:
+                "emdRow values are adjusted after every insert so Actions point at rows in the final Updated.xlsx (not pre-shift positions)."
         },
         {
             topic: "Related files",
@@ -826,6 +1170,13 @@ async function writeMappingLogWorkbook(logEntries, stats) {
         value: logEntries.filter((e) => e.action === "NameMissingFromEmd")
             .length,
         description: "Names in result.json with no EMD Name block."
+    });
+    summary.addRow({
+        metric: "CreatedNameBlock",
+        value: logEntries.filter(
+            (e) => e.action === "CreatedNameBlock"
+        ).length,
+        description: "Missing Name blocks automatically created."
     });
     summary.getRow(1).font = { bold: true };
 
@@ -956,7 +1307,10 @@ const logJsonPath = writeMappingLogJson(
     );
 }
 
-module.exports = { main };
+module.exports = {
+    main,
+    adjustLogRowsAfterInsert
+};
 
 if (require.main === module) {
     main().catch((error) => {

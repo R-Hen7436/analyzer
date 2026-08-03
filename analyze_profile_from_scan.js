@@ -36,11 +36,14 @@ const PROFILE_FILE_NAME = PROFILE_INPUT.endsWith(".mk")
     ? PROFILE_INPUT
     : `${PROFILE_INPUT}.mk`;
 
-const PROFILE_DIR =
-    `/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/build/profiles`;
+// Original work-laptop path (restore when analyzing real profiles):
+// const PROFILE_DIR =
+//     `/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/build/profiles`;
+// const PROFILE_MK_PATH =
+//     path.join(PROFILE_DIR, PROFILE_FILE_NAME);
 
-const PROFILE_MK_PATH =
-    path.join(PROFILE_DIR, PROFILE_FILE_NAME);
+// Local dummy testing profile:
+const PROFILE_MK_PATH = path.join(__dirname, "dummy_profile.mk");
 
 function normalizeProfileValue(value) {
     if (!value) {
@@ -202,7 +205,44 @@ function buildNotes(kind, profileValue, occurrenceCount) {
     return "Switch found in ren_epc but missing from profile";
 }
 
-function buildUniqueImpacts(locations) {
+function buildUniqueImpacts(locations, blocks) {
+    if (blocks && blocks.length > 0) {
+        const fromBlocks = [];
+
+        for (const block of blocks) {
+            const file = block.file || "";
+            const functions =
+                Array.isArray(block.functions) && block.functions.length > 0
+                    ? block.functions
+                    : [""];
+
+            for (const functionName of functions) {
+                fromBlocks.push({
+                    file,
+                    function: functionName || "",
+                    relation: block.relation || ""
+                });
+            }
+        }
+
+        const unique = [
+            ...new Map(
+                fromBlocks.map((impact) => [
+                    `${impact.file} | ${impact.function}`,
+                    impact
+                ])
+            ).values()
+        ].sort((a, b) =>
+            `${a.file} | ${a.function}`.localeCompare(
+                `${b.file} | ${b.function}`
+            )
+        );
+
+        if (unique.length > 0) {
+            return unique;
+        }
+    }
+
     if (!locations || locations.length === 0) {
         return [
             {
@@ -232,6 +272,31 @@ function buildUniqueImpacts(locations) {
             `${b.file} | ${b.function}`
         )
     );
+}
+
+function collectFunctionsFromScanEntry(scanEntry) {
+    const blocks = scanEntry.blocks || [];
+    const fromBlocks = [];
+
+    for (const block of blocks) {
+        for (const functionName of block.functions || []) {
+            if (functionName) {
+                fromBlocks.push(functionName);
+            }
+        }
+    }
+
+    if (fromBlocks.length > 0) {
+        return [...new Set(fromBlocks)].sort();
+    }
+
+    const locations = scanEntry.locations || [];
+
+    return [
+        ...new Set(locations.map((location) => location.function || ""))
+    ]
+        .filter(Boolean)
+        .sort();
 }
 
 function buildImpactRowsForName(name, result, impacts) {
@@ -275,16 +340,13 @@ function buildRows(scanResult, profileValues) {
         );
 
         const locations = scanEntry.locations || [];
+        const blocks = scanEntry.blocks || [];
         const profileValue = getProfileValueForName(name, kind, profileValues);
         const profileDisplay = formatProfileDisplay(kind, profileValue);
         const result = evaluateResult(kind, profileValue, locations.length);
         const notes = buildNotes(kind, profileValue, locations.length);
 
-        const functions = [
-            ...new Set(
-                locations.map((location) => location.function || "")
-            )
-        ].filter(Boolean).sort();
+        const functions = collectFunctionsFromScanEntry(scanEntry);
 
         summaryRows.push({
             kind,
@@ -306,12 +368,13 @@ function buildRows(scanResult, profileValues) {
                 fileType: location.fileType || "",
                 line: location.line || "",
                 functionName: location.function || "",
+                role: location.role || "",
                 result,
                 code: location.code || ""
             });
         }
 
-        const impacts = buildUniqueImpacts(locations);
+        const impacts = buildUniqueImpacts(locations, blocks);
 
         impactRows.push(...buildImpactRowsForName(name, result, impacts));
 
@@ -320,6 +383,7 @@ function buildRows(scanResult, profileValues) {
             profile: profileDisplay,
             result,
             occurrenceCount: locations.length,
+            blocks,
             impacts
         };
     }
