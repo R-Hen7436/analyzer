@@ -4,15 +4,23 @@ const { getRunPaths, ensureRunDirs } = require("./output_paths");
 
 const WORKSPACE = process.argv[2];
 const PROFILE_INPUT = process.argv[3];
+const BEHAVIOR_PROFILE_INPUT = process.argv[4] || "mo2mmtsm";
 
 if (!WORKSPACE || !PROFILE_INPUT) {
     console.error("Usage:");
-    console.error("  node run_all.js <workspace> <profile>");
+    console.error(
+        "  node run_all.js <workspace> <uvp_profile> [behavior_profile]"
+    );
     console.error("");
     console.error("Example:");
     console.error(
-        "  node run_all.js ubasrh_KPC02530_2291_matsuri3_mp C2WC_prd_profile"
+        "  node run_all.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile mo2mmtsm"
     );
+    console.error("");
+    console.error(
+        "  behavior_profile defaults to mo2mmtsm when omitted (local);"
+    );
+    console.error("  it is passed only to analyze_profile_from_scan.js.");
     process.exit(1);
 }
 
@@ -62,7 +70,8 @@ async function main() {
 
         await runNodeScript("analyze_profile_from_scan.js", [
             WORKSPACE,
-            PROFILE_INPUT
+            PROFILE_INPUT,
+            BEHAVIOR_PROFILE_INPUT
         ]);
 
         console.log("\n=================================");

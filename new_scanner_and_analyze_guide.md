@@ -3,12 +3,93 @@
 This guide explains:
 
 1. The **3 scripts** — what each does, inputs/outputs, and why order matters
-2. What the **new** `scan_ren_epc.js` writes
-3. How `analyze_profile_from_scan.js` was updated to use it
+2. **How to run** each script (CLI, examples, when you can skip a step)
+3. What the **new** `scan_ren_epc.js` writes
+4. How `analyze_profile_from_scan.js` was updated to use it
 
 ---
 
-## 0. The 3 scripts (run order)
+## 0. How to run the scripts
+
+Run all commands from the project root (`analyzer/`), where the `.js` scripts live.
+
+### Arguments
+
+| Arg | Used by | Meaning |
+|-----|---------|---------|
+| `<workspace>` | all | Workspace / stream id (e.g. `ubasrh_KPC02530_2291_matsuri3_mp`). Used in the output path. |
+| `<uvp_profile>` | all | UVP profile name (with or without `.mk`). Keys the output folder and names the UVP `.mk`. |
+| `[behavior_profile]` | analyze, `run_all` only | Behavior-mode profile name (with or without `.mk`). Defaults to `mo2mmtsm` when omitted. |
+
+Output root (always keyed by **UVP** profile name):
+
+```text
+output/<workspace>/<uvp_profile>/
+  scan/     ← Step 1
+  analyze/  ← Step 2
+  map/      ← Step 3
+```
+
+Local profile files (while work-laptop paths are commented out):
+
+| Role | Local file | Work laptop (same `profiles/` dir) |
+|------|------------|--------------------------------------|
+| UVP | `dummy_profile.mk` | `<uvp_profile>.mk` under `.../build/profiles/` |
+| Behavior | `mo2mmtsm.mk` | `<behavior_profile>.mk` under the same `profiles/` dir |
+
+### Full pipeline (recommended)
+
+```bash
+node run_all.js <workspace> <uvp_profile> [behavior_profile]
+```
+
+Example (local):
+
+```bash
+node run_all.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile mo2mmtsm
+```
+
+`run_all.js` runs scan → analyze → excel_mapper. The optional 3rd arg is passed **only** to analyze.
+
+### Step by step
+
+```bash
+# Step 1 — scan renEPC sources
+node scan_ren_epc.js <workspace> <uvp_profile>
+
+# Step 2 — score against UVP + behavior profiles
+node analyze_profile_from_scan.js <workspace> <uvp_profile> [behavior_profile]
+
+# Step 3 — fill EMD Excel from result.json
+node excel_mapper.js <workspace> <uvp_profile>
+```
+
+Example (local):
+
+```bash
+node scan_ren_epc.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile
+node analyze_profile_from_scan.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile mo2mmtsm
+node excel_mapper.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile
+```
+
+### Run only what you need
+
+| Situation | Command |
+|-----------|---------|
+| Already have scan JSON; only re-score profiles | `node analyze_profile_from_scan.js <ws> <uvp> [behavior]` |
+| Already have `analyze/result.json`; only update Excel | `node excel_mapper.js <ws> <uvp>` |
+| Re-scan code after source changes | `node scan_ren_epc.js <ws> <uvp>` then analyze (then mapper if needed) |
+
+Use the **same** `<workspace>` and `<uvp_profile>` for every step so all three folders stay under one run root.
+
+### Prerequisites before mapper
+
+- `templates/renEPC_change_point_list.xlsx` (or `renEPC_change_point_list.xlsx` at project root)
+- `analyze/result.json` from Step 2
+
+---
+
+## 1. The 3 scripts (run order)
 
 You always run them in this order (or use `run_all.js`, which does the same):
 
@@ -21,25 +102,6 @@ scan_ren_epc.js → analyze_profile… → excel_mapper.js
                     result.xlsx         mapping_log
 ```
 
-```bash
-# One-shot
-node run_all.js <workspace> <profile>
-
-# Or step by step (same workspace/profile each time)
-node scan_ren_epc.js <workspace> <profile>
-node analyze_profile_from_scan.js <workspace> <profile>
-node excel_mapper.js <workspace> <profile>
-```
-
-Shared output root (from `output_paths.js`):
-
-```text
-output/<workspace>/<profile>/
-  scan/     ← Step 1
-  analyze/  ← Step 2
-  map/      ← Step 3
-```
-
 ### Why this order? (prerequisites)
 
 ```text
@@ -48,7 +110,7 @@ Step 1 must run first
   → nothing else has data without this
 
 Step 2 needs Step 1
-  → reads scan JSON + profile .mk
+  → reads scan JSON + UVP profile .mk + behavior profile .mk
   → cannot decide O/X/- without knowing what was found in code
 
 Step 3 needs Step 2
@@ -79,14 +141,20 @@ If you skip a step:
 - For each hit, records file / line / function / code
 - **New:** also builds `#if…#endif` **blocks** with `relation` + enclosed `functions`
 
+**How to run:**
+
+```bash
+node scan_ren_epc.js <workspace> <uvp_profile>
+```
+
 **Inputs:**
 - Source tree (`REN_EPC_DIRS`)
 - `config/local_switch.json`
-- CLI: `<workspace> <profile>` (profile is only for output folder name here)
+- CLI: `<workspace> <uvp_profile>` (profile is only for output folder name here)
 
 **Output:**
 ```text
-output/<workspace>/<profile>/scan/ren_epc_scan_result.json
+output/<workspace>/<uvp_profile>/scan/ren_epc_scan_result.json
 ```
 
 **Why first:**
@@ -106,40 +174,50 @@ CPP / headers / makefiles
 
 ### Script 2 — `analyze_profile_from_scan.js` (SECOND)
 
-**Job:** Compare scan results against the UVP profile and decide Pass / Fail / None.
+**Job:** Compare scan results against UVP and behavior profiles and decide Pass / Fail / None.
 
 **Does:**
 - Loads `ren_epc_scan_result.json` from Step 1
-- Loads profile `.mk` (work laptop: `/data1/p4work/.../profiles/`; local test: `dummy_profile.mk`)
+- Loads **UVP** profile `.mk` (work laptop: `/data1/p4work/.../profiles/`; local: `dummy_profile.mk`)
+- Loads **behavior** profile `.mk` from the **same profiles directory** on work laptop (local: `mo2mmtsm.mk`)
 - For each switch:
+  - `UVP_SW_*` → scored against the UVP profile
+  - `BEHAVIOR_MODE_IF_*` → paired to `UVP_SW_*` and scored against the **behavior** profile only (no fallback to UVP)
+  - local switches → no profile lookup
   - found in code + profile TRUE → `O`
   - found in code + profile FALSE/missing → `X`
   - not found in code → `-`
 - Builds **impacts** (file + function affected)
   - **New:** prefers `blocks[].functions` from the scanner
-- Writes Excel + JSON summary
+- Writes Excel + JSON summary (one `result.json`; same `switches` shape; adds `behaviorProfileFile` metadata)
+
+**How to run:**
+
+```bash
+node analyze_profile_from_scan.js <workspace> <uvp_profile> [behavior_profile]
+```
 
 **Inputs:**
 - `scan/ren_epc_scan_result.json`  ← **requires Step 1**
-- Profile `.mk` file
-- CLI: `<workspace> <profile>`
+- UVP profile `.mk` + behavior profile `.mk`
+- CLI: `<workspace> <uvp_profile> [behavior_profile]` (`behavior_profile` defaults to `mo2mmtsm`)
 
 **Outputs:**
 ```text
-output/<workspace>/<profile>/analyze/result.json
-output/<workspace>/<profile>/analyze/result.xlsx
+output/<workspace>/<uvp_profile>/analyze/result.json
+output/<workspace>/<uvp_profile>/analyze/result.xlsx
 ```
 
 **Why second (and why not first):**
 It needs both:
 1. “What exists in code?” → from scan  
-2. “What does the product profile enable?” → from `.mk`
+2. “What does each product profile enable?” → from UVP `.mk` and behavior `.mk`
 
 Without the scan, it cannot know occurrence / impacts.  
-Without the profile, it cannot assign `O` vs `X` for UVP/behavior.
+Without the profiles, it cannot assign `O` vs `X` for UVP/behavior.
 
 ```text
-ren_epc_scan_result.json  +  profile.mk
+ren_epc_scan_result.json  +  uvp_profile.mk  +  behavior_profile.mk
               │
               ▼
  analyze_profile_from_scan.js
@@ -161,16 +239,22 @@ ren_epc_scan_result.json  +  profile.mk
 - Writes Result into column E (`O` / `X` / `-`)
 - Logs matches / orphans / missing names
 
+**How to run:**
+
+```bash
+node excel_mapper.js <workspace> <uvp_profile>
+```
+
 **Inputs:**
 - `analyze/result.json`  ← **requires Step 2**
 - `templates/renEPC_change_point_list.xlsx`
-- CLI: `<workspace> <profile>`
+- CLI: `<workspace> <uvp_profile>`
 
 **Outputs:**
 ```text
-output/<workspace>/<profile>/map/renEPC_change_point_list_updated.xlsx
-output/<workspace>/<profile>/map/mapping_log.xlsx
-output/<workspace>/<profile>/map/mapping_log.json
+output/<workspace>/<uvp_profile>/map/renEPC_change_point_list_updated.xlsx
+output/<workspace>/<uvp_profile>/map/mapping_log.xlsx
+output/<workspace>/<uvp_profile>/map/mapping_log.json
 ```
 
 **Why third:**
@@ -195,17 +279,17 @@ result.json  +  renEPC_change_point_list.xlsx
 | # | Script | Question it answers | Needs before it | Produces |
 |---|--------|---------------------|-----------------|----------|
 | 1 | `scan_ren_epc.js` | Where do switches appear in code? | Source tree | `scan/*.json` |
-| 2 | `analyze_profile_from_scan.js` | Do code findings match the profile? | Scan JSON + profile `.mk` | `analyze/result.json` |
+| 2 | `analyze_profile_from_scan.js` | Do code findings match UVP / behavior profiles? | Scan JSON + UVP `.mk` + behavior `.mk` | `analyze/result.json` |
 | 3 | `excel_mapper.js` | How do those results fill the EMD Excel? | `result.json` + template xlsx | `map/*updated*.xlsx` |
 
 ```text
-Code ──► Scan ──► Analyze(+Profile) ──► Excel map
-         (find)    (judge O/X/-)         (report)
+Code ──► Scan ──► Analyze(+UVP + Behavior profiles) ──► Excel map
+         (find)    (judge O/X/-)                       (report)
 ```
 
 ---
 
-## 1. Big picture (scan ↔ analyze data)
+## 2. Big picture (scan ↔ analyze data)
 
 ```text
 scan_ren_epc.js
@@ -228,7 +312,7 @@ analyze_profile_from_scan.js
 
 ---
 
-## 2. Old vs new scanner
+## 3. Old vs new scanner
 
 ### Old behavior (before)
 
@@ -290,7 +374,7 @@ The list of contained functions lives in **`blocks`**.
 
 ---
 
-## 3. New scan JSON shape (per switch)
+## 4. New scan JSON shape (per switch)
 
 ```json
 "UVP_SW_OCR": {
@@ -422,7 +506,7 @@ Same logic as Example B; only `functions.length === 1`.
 
 ---
 
-## 4. What still decides PASS / FAIL / NONE
+## 5. What still decides PASS / FAIL / NONE
 
 Analyze **did not** change the PASS rule. It still uses:
 
@@ -458,7 +542,7 @@ So:
 
 ---
 
-## 5. How analyze was updated to complement the scanner
+## 6. How analyze was updated to complement the scanner
 
 ### Before (old analyze)
 
@@ -562,7 +646,7 @@ resultSwitches[name] = {
 
 ---
 
-## 6. End-to-end example (HCPDF wrap)
+## 7. End-to-end example (HCPDF wrap)
 
 ### Source
 
@@ -627,7 +711,7 @@ That `impacts` list is what `excel_mapper.js` uses for “Affecting Header/Funct
 
 ---
 
-## 7. What to look at when reading JSON
+## 8. What to look at when reading JSON
 
 ```text
 Want to know...                         Look at...
@@ -642,7 +726,7 @@ What goes to Excel impacts?             analyze impacts (from blocks)
 
 ---
 
-## 8. Compatibility
+## 9. Compatibility
 
 | Scan JSON | Analyze behavior |
 |-----------|------------------|
@@ -653,16 +737,28 @@ Additive change: old fields remain; new fields were added.
 
 ---
 
-## 9. Quick cheatsheet
+## 10. Quick cheatsheet
 
 ```text
+How to run (from analyzer/)
+  node run_all.js <workspace> <uvp_profile> [behavior_profile]
+  node scan_ren_epc.js <workspace> <uvp_profile>
+  node analyze_profile_from_scan.js <workspace> <uvp_profile> [behavior_profile]
+  node excel_mapper.js <workspace> <uvp_profile>
+
+Profiles (local)
+  UVP       = dummy_profile.mk
+  Behavior  = mo2mmtsm.mk  (default behavior_profile name: mo2mmtsm)
+
 scan_ren_epc.js
   locations  = line hits (+ role)
   blocks     = #if regions (+ relation + functions)
 
 analyze_profile_from_scan.js
-  PASS/FAIL  = still from locations + profile
-  impacts    = prefer blocks, else locations
+  UVP_SW_*            → UVP profile
+  BEHAVIOR_MODE_IF_*  → paired UVP_SW_* in behavior profile (no UVP fallback)
+  PASS/FAIL           = locations + that profile TRUE/FALSE
+  impacts             = prefer blocks, else locations
 
 relation
   inside_function  = switch inside function
