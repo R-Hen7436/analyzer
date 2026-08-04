@@ -36,13 +36,13 @@ const PROFILE_FILE_NAME = PROFILE_INPUT.endsWith(".mk")
     ? PROFILE_INPUT
     : `${PROFILE_INPUT}.mk`;
 
-// Original work-laptop path (restore when analyzing real profiles):
+// Original work-laptop profile path (restore when using real p4work):
 // const PROFILE_DIR =
 //     `/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/build/profiles`;
 // const PROFILE_MK_PATH =
 //     path.join(PROFILE_DIR, PROFILE_FILE_NAME);
 
-// Local dummy testing profile:
+// Local dummy profile for testing without work laptop:
 const PROFILE_MK_PATH = path.join(__dirname, "dummy_profile.mk");
 
 function normalizeProfileValue(value) {
@@ -205,45 +205,99 @@ function buildNotes(kind, profileValue, occurrenceCount) {
     return "Switch found in ren_epc but missing from profile";
 }
 
+function normalizeImpactFunction(functionName) {
+    const text = String(functionName || "").trim();
+
+    if (!text) {
+        return "";
+    }
+
+    if (
+        text === "(file-scope)" ||
+        text.startsWith("(makefile")
+    ) {
+        return "(file-scope)";
+    }
+
+    return text;
+}
+
 function buildUniqueImpacts(locations, blocks) {
-    if (blocks && blocks.length > 0) {
-        const fromBlocks = [];
+    const impacts = [];
+    const seen = new Set();
 
-        for (const block of blocks) {
-            const file = block.file || "";
-            const functions =
-                Array.isArray(block.functions) && block.functions.length > 0
-                    ? block.functions
-                    : [""];
+    function addImpact(file, fn, relation) {
+        const normalizedFunction =
+            !fn || fn === "(file-scope)"
+                ? "(file-scope)"
+                : fn;
 
-            for (const functionName of functions) {
-                fromBlocks.push({
-                    file,
-                    function: functionName || "",
-                    relation: block.relation || ""
-                });
-            }
+        const key = `${file}|${normalizedFunction}`;
+
+        if (seen.has(key)) {
+            return;
         }
 
-        const unique = [
-            ...new Map(
-                fromBlocks.map((impact) => [
-                    `${impact.file} | ${impact.function}`,
-                    impact
-                ])
-            ).values()
-        ].sort((a, b) =>
-            `${a.file} | ${a.function}`.localeCompare(
-                `${b.file} | ${b.function}`
-            )
-        );
+        seen.add(key);
 
-        if (unique.length > 0) {
-            return unique;
+        impacts.push({
+            file,
+            function: normalizedFunction,
+            relation
+        });
+    }
+
+    // Build impacts from blocks
+    for (const block of blocks || []) {
+        if (!block.functions || block.functions.length === 0) {
+            addImpact(
+                block.file || "",
+                "(file-scope)",
+                block.relation || ""
+            );
+
+            continue;
+        }
+
+        for (const fn of block.functions) {
+            addImpact(
+                block.file || "",
+                fn,
+                block.relation || ""
+            );
         }
     }
 
-    if (!locations || locations.length === 0) {
+    // Build impacts from locations
+        for (const location of locations || []) {
+            const normalizedFn = normalizeImpactFunction(location.function);
+
+            if (!normalizedFn) {
+                continue;
+            }
+
+            // Skip file-scope occurrence when a real function
+            // impact already exists in the same file.
+            if (normalizedFn === "(file-scope)") {
+                const hasFunctionImpact = impacts.some(
+                    impact =>
+                        impact.file === (location.file || "") &&
+                        impact.function !== "(file-scope)"
+                );
+
+                if (hasFunctionImpact) {
+                    continue;
+                }
+            }
+
+            addImpact(
+                location.file || "",
+                normalizedFn,
+                "occurrence"
+            );
+        }
+
+    if (impacts.length === 0) {
         return [
             {
                 file: "Not Found",
@@ -252,24 +306,9 @@ function buildUniqueImpacts(locations, blocks) {
         ];
     }
 
-    return [
-        ...new Map(
-            locations.map((location) => {
-                const file = location.file || "";
-                const functionName = location.function || location.functionName || "";
-
-                return [
-                    `${file} | ${functionName}`,
-                    {
-                        file,
-                        function: functionName
-                    }
-                ];
-            })
-        ).values()
-    ].sort((a, b) =>
-        `${a.file} | ${a.function}`.localeCompare(
-            `${b.file} | ${b.function}`
+    return impacts.sort((a, b) =>
+        `${a.file}|${a.function}`.localeCompare(
+            `${b.file}|${b.function}`
         )
     );
 }

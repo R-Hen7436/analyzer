@@ -21,13 +21,15 @@ if (!WORKSPACE || !PROFILE_INPUT) {
 
 const RUN_PATHS = ensureRunDirs(getRunPaths(WORKSPACE, PROFILE_INPUT));
 
-const REN_EPC_DIRS = [
-    // Original work-laptop paths (restore when scanning real p4work):
-    // `/data1/p4work/${WORKSPACE}/stream_reference/core_parts/subsys_PLP/platform_element/ren/ren_epc`,
-    // `/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/platform_element/ren/ren_epc`,
+// Original work-laptop roots (restore when scanning real p4work):
+// const REN_EPC_DIRS = [
+//     `/data1/p4work/${WORKSPACE}/stream_reference/core_parts/subsys_PLP/platform_element/ren/ren_epc`,
+//     `/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/platform_element/ren/ren_epc`,
+// ];
 
-    // Local dummy testing path:
-    path.join(__dirname, "codefiles")
+// Local dummy testing root:
+const REN_EPC_DIRS = [
+    path.join(__dirname, "codefiles"),
 ];
 
 const OUTPUT_JSON = RUN_PATHS.scanJson;

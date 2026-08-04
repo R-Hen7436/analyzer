@@ -110,13 +110,16 @@ function basenameFile(filePath) {
 }
 
 function isMakefileName(fileName) {
-    return /^Makefile$/i.test(String(fileName || "").trim());
+    const name = String(fileName || "").trim();
+    // Same basename under make_client/ vs make_server/ must stay distinct.
+    return /^Makefile$/i.test(name) || /^rule\.mak$/i.test(name);
 }
 
 /*
- * Makefile paths are collapsed to basename elsewhere, which makes
- * epc_test/make_client/Makefile and epc_test/make_server/Makefile look identical.
- * Keep parent/Makefile for this file only; all other files stay basename-only.
+ * Makefile / rule.mak paths are collapsed to basename elsewhere, which makes
+ * epc_test/make_client/Makefile and epc_test/make_server/Makefile (and the same
+ * for rule.mak) look identical. Keep parent/<file> for these only; all other
+ * files stay basename-only.
  */
 function emdFileLabel(filePath) {
     const normalized = normalizeImpactFile(filePath);
@@ -167,7 +170,8 @@ function makefileMatchKey(fileLabel) {
         return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`.toLowerCase();
     }
 
-    return "makefile";
+    // Bare Makefile historically keyed as "makefile"; rule.mak keeps its basename.
+    return /^Makefile$/i.test(base) ? "makefile" : base.toLowerCase();
 }
 
 function functionToken(raw) {
@@ -261,6 +265,7 @@ function impactsMatch(emdParsed, analyzerParsed) {
     const emdFn = emdParsed.functionToken;
     const anFn = analyzerParsed.functionToken;
 
+    if ( emdFile.toLowerCase() === "ren_epc_operator_handling_factory.cpp" ) { console.log( "MATCH TEST", { emdFn, anFn, analyzerFile } ); }
     if (!emdFn && !anFn) {
         return true;
     }
@@ -361,18 +366,18 @@ async function writeOutputWorkbook(workbook, outputPath) {
 function detectSection(bText, current) {
     const text = bText.trim();
 
-    if (text === "¢£UVP" || text === "UVP") {
+    if (text === "â– UVP" || text === "UVP") {
         return SECTION.UVP;
     }
 
-    if (text === "¢£VCP" || text === "VCP") {
+    if (text === "â– VCP" || text === "VCP") {
         return SECTION.VCP;
     }
 
     if (
-        text === "¢£Behavior Mode" ||
+        text === "â– Behavior Mode" ||
         text === "Behavior Mode" ||
-        /^¢£?\s*Behavior\s*Mode$/i.test(text)
+        /^â– ?\s*Behavior\s*Mode$/i.test(text)
     ) {
         return SECTION.BEHAVIOR;
     }
@@ -380,14 +385,14 @@ function detectSection(bText, current) {
     // EMD: "Local Switch" ? analyzer kind=local_switch
     if (
         text === "Local Switch" ||
-        text === "¢£Local Switch" ||
-        /^¢£?\s*Local\s+Switch$/i.test(text)
+        text === "â– Local Switch" ||
+        /^â– ?\s*Local\s+Switch$/i.test(text)
     ) {
         return SECTION.LOCAL_SWITCH;
     }
 
-    // Separate model list under ¢£PRD_SW ? out of scope (not in local_switch.json)
-    if (text === "¢£PRD_SW" || text === "PRD_SW") {
+    // Separate model list under â– PRD_SW ? out of scope (not in local_switch.json)
+    if (text === "â– PRD_SW" || text === "PRD_SW") {
         return SECTION.PRD_SW;
     }
 
@@ -397,17 +402,17 @@ function detectSection(bText, current) {
 function isSectionMarker(bText) {
     const text = bText.trim();
     return (
-        text === "¢£UVP" ||
-        text === "¢£VCP" ||
-        text === "¢£Behavior Mode" ||
-        text === "¢£PRD_SW" ||
+        text === "â– UVP" ||
+        text === "â– VCP" ||
+        text === "â– Behavior Mode" ||
+        text === "â– PRD_SW" ||
         text === "Local Switch" ||
-        text === "¢£Local Switch" ||
+        text === "â– Local Switch" ||
         text === "UVP" ||
         text === "VCP" ||
         text === "PRD_SW" ||
-        /^¢£?\s*Behavior\s*Mode$/i.test(text) ||
-        /^¢£?\s*Local\s+Switch$/i.test(text)
+        /^â– ?\s*Behavior\s*Mode$/i.test(text) ||
+        /^â– ?\s*Local\s+Switch$/i.test(text)
     );
 }
 
@@ -725,6 +730,7 @@ function applyMapping(worksheet, switches) {
 
         const symbol = mapResultSymbol(entry.result);
         const analyzerImpacts = (entry.impacts || []).map(parseAnalyzerImpact);
+        if (group.name === "UVP_SW_AI_SYSTEM") { console.log( "ANALYZER IMPACTS", analyzerImpacts .filter(i => i.file === "ren_epc_operator_handling_factory.cpp" ) .map(i => ({ file: i.file, functionToken: i.functionToken, rawFunction: i.rawFunction })) ); }
         const onlyNotFound =
             analyzerImpacts.length > 0 &&
             analyzerImpacts.every((impact) => impact.isNotFound);
