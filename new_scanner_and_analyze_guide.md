@@ -1,15 +1,47 @@
-# Pipeline Guide + New Scanner / Analyze Details
+# Pipeline Guide + Scanner / Analyze / Mapper Details
 
 This guide explains:
 
-1. The **3 scripts** — what each does, inputs/outputs, and why order matters
-2. **How to run** each script (CLI, examples, when you can skip a step)
-3. What the **new** `scan_ren_epc.js` writes
-4. How `analyze_profile_from_scan.js` was updated to use it
+1. The **shared output layout** (`output_paths.js`)
+2. The **3 scripts** (+ `run_all.js`) — what each does, inputs/outputs, and why order matters
+3. **How to run** each script
+4. What `scan_ren_epc.js` writes
+5. How `analyze_profile_from_scan.js` scores profiles and builds impacts
+6. How `excel_mapper.js` fills the EMD Excel
+
+For **step-by-step internals** (function indexing, block parsing, impact merge, EMD match/insert), see [`how_each_script_works.md`](./how_each_script_works.md).
 
 ---
 
-## 0. How to run the scripts
+## 0. Shared paths (`output_paths.js`)
+
+All scripts resolve paths through `getRunPaths(workspace, profileInput)` and create folders with `ensureRunDirs`.
+
+Profile input may include or omit `.mk`; the folder name is always **without** `.mk`.
+
+```text
+output/<workspace>/<uvp_profile>/
+  scan/
+    ren_epc_scan_result.json
+  analyze/
+    result.json
+    result.xlsx
+  map/
+    renEPC_change_point_list_updated.xlsx
+    mapping_log.xlsx
+    mapping_log.json
+    renEPC_change_point_list_Updated_locked.xlsx   ← fallback if primary is locked
+    mapping_log_locked.xlsx                        ← fallback if primary is locked
+```
+
+Template resolution (first existing wins):
+
+1. `templates/renEPC_change_point_list.xlsx`
+2. `renEPC_change_point_list.xlsx` (project root)
+
+---
+
+## 1. How to run the scripts
 
 Run all commands from the project root (`analyzer/`), where the `.js` scripts live.
 
@@ -17,39 +49,31 @@ Run all commands from the project root (`analyzer/`), where the `.js` scripts li
 
 | Arg | Used by | Meaning |
 |-----|---------|---------|
-| `<workspace>` | all | Workspace / stream id (e.g. `ubasrh_KPC02530_2291_matsuri3_mp`). Used in the output path. |
-| `<uvp_profile>` | all | UVP profile name (with or without `.mk`). Keys the output folder and names the UVP `.mk`. |
-| `[behavior_profile]` | analyze, `run_all` only | Behavior-mode profile name (with or without `.mk`). Defaults to `mo2mmtsm` when omitted. |
+| `<workspace>` | all | Workspace / stream id (e.g. `ubasrh_KPC02530_2291_matsuri3_mp`). Used in p4 paths and output folder. |
+| `<uvp_profile>` | all | UVP profile name (with or without `.mk`). Keys the output folder; analyze loads this `.mk` as the UVP profile. |
+| `<behavior_profile>` | analyze, `run_all` | Behavior-mode profile name (with or without `.mk`). **Required** for analyze / `run_all` (no default). Passed only to analyze. |
 
-Output root (always keyed by **UVP** profile name):
+Work-laptop profile directory (analyze):
 
 ```text
-output/<workspace>/<uvp_profile>/
-  scan/     ← Step 1
-  analyze/  ← Step 2
-  map/      ← Step 3
+/data1/p4work/<workspace>/stream_target/subsys_PLP/build/profiles/
+  <uvp_profile>.mk
+  <behavior_profile>.mk
 ```
-
-Local profile files (while work-laptop paths are commented out):
-
-| Role | Local file | Work laptop (same `profiles/` dir) |
-|------|------------|--------------------------------------|
-| UVP | `dummy_profile.mk` | `<uvp_profile>.mk` under `.../build/profiles/` |
-| Behavior | `mo2mmtsm.mk` | `<behavior_profile>.mk` under the same `profiles/` dir |
 
 ### Full pipeline (recommended)
 
 ```bash
-node run_all.js <workspace> <uvp_profile> [behavior_profile]
+node run_all.js <workspace> <uvp_profile> <behavior_profile>
 ```
 
-Example (local):
+Example:
 
 ```bash
-node run_all.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile mo2mmtsm
+node run_all.js ubasrh_KPC02530_2291_matsuri3_mp mo2cmtsmN01_uvp_profile C2YC_uvp_profile
 ```
 
-`run_all.js` runs scan → analyze → excel_mapper. The optional 3rd arg is passed **only** to analyze.
+`run_all.js` runs scan → analyze → excel_mapper. The 3rd arg is passed **only** to analyze.
 
 ### Step by step
 
@@ -58,25 +82,25 @@ node run_all.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile mo2mmtsm
 node scan_ren_epc.js <workspace> <uvp_profile>
 
 # Step 2 — score against UVP + behavior profiles
-node analyze_profile_from_scan.js <workspace> <uvp_profile> [behavior_profile]
+node analyze_profile_from_scan.js <workspace> <uvp_profile> <behavior_profile>
 
 # Step 3 — fill EMD Excel from result.json
 node excel_mapper.js <workspace> <uvp_profile>
 ```
 
-Example (local):
+Example:
 
 ```bash
-node scan_ren_epc.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile
-node analyze_profile_from_scan.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile mo2mmtsm
-node excel_mapper.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile
+node scan_ren_epc.js ubasrh_KPC02530_2291_matsuri3_mp mo2cmtsmN01_uvp_profile
+node analyze_profile_from_scan.js ubasrh_KPC02530_2291_matsuri3_mp mo2cmtsmN01_uvp_profile C2YC_uvp_profile
+node excel_mapper.js ubasrh_KPC02530_2291_matsuri3_mp mo2cmtsmN01_uvp_profile
 ```
 
 ### Run only what you need
 
 | Situation | Command |
 |-----------|---------|
-| Already have scan JSON; only re-score profiles | `node analyze_profile_from_scan.js <ws> <uvp> [behavior]` |
+| Already have scan JSON; only re-score profiles | `node analyze_profile_from_scan.js <ws> <uvp> <behavior>` |
 | Already have `analyze/result.json`; only update Excel | `node excel_mapper.js <ws> <uvp>` |
 | Re-scan code after source changes | `node scan_ren_epc.js <ws> <uvp>` then analyze (then mapper if needed) |
 
@@ -84,14 +108,12 @@ Use the **same** `<workspace>` and `<uvp_profile>` for every step so all three f
 
 ### Prerequisites before mapper
 
-- `templates/renEPC_change_point_list.xlsx` (or `renEPC_change_point_list.xlsx` at project root)
+- Template at `templates/renEPC_change_point_list.xlsx` (or project root)
 - `analyze/result.json` from Step 2
 
 ---
 
-## 1. The 3 scripts (run order)
-
-You always run them in this order (or use `run_all.js`, which does the same):
+## 2. The 3 scripts (run order)
 
 ```text
 Step 1          Step 2              Step 3
@@ -102,23 +124,20 @@ scan_ren_epc.js → analyze_profile… → excel_mapper.js
                     result.xlsx         mapping_log
 ```
 
-### Why this order? (prerequisites)
+### Why this order?
 
 ```text
 Step 1 must run first
   → creates the inventory of switches found in code
-  → nothing else has data without this
 
 Step 2 needs Step 1
-  → reads scan JSON + UVP profile .mk + behavior profile .mk
+  → reads scan JSON + UVP .mk + behavior .mk
   → cannot decide O/X/- without knowing what was found in code
 
 Step 3 needs Step 2
   → reads analyze result.json (not the raw scan)
-  → fills the Excel EMD sheet with Result + matched impacts
+  → fills the Excel EMD sheet with Result + matched / inserted impacts
 ```
-
-If you skip a step:
 
 | You skip… | What breaks |
 |-----------|-------------|
@@ -133,13 +152,20 @@ If you skip a step:
 **Job:** Search ren_epc source for switches and record where they appear.
 
 **Does:**
-- Walks source files (work laptop: `/data1/p4work/.../ren_epc`; local test: `codefiles/`)
+- Walks both ren_epc trees under the workspace:
+
+```text
+/data1/p4work/<workspace>/stream_reference/.../ren/ren_epc
+/data1/p4work/<workspace>/stream_target/.../ren/ren_epc
+```
+
 - Finds:
   - `UVP_SW_*`
   - `BEHAVIOR_MODE_IF_*`
   - local switches from `config/local_switch.json`
-- For each hit, records file / line / function / code
-- **New:** also builds `#if…#endif` **blocks** with `relation` + enclosed `functions`
+- For each hit, records file / line / function / role / code
+- Builds `#if…#endif` **blocks** with `relation` + enclosed `functions`
+- Indexes functions with brace matching; if a function never closes `}`, its end is clipped to the next detected function start (so later functions still own their tokens)
 
 **How to run:**
 
@@ -148,27 +174,17 @@ node scan_ren_epc.js <workspace> <uvp_profile>
 ```
 
 **Inputs:**
-- Source tree (`REN_EPC_DIRS`)
+- Source trees (`REN_EPC_DIRS`)
 - `config/local_switch.json`
 - CLI: `<workspace> <uvp_profile>` (profile is only for output folder name here)
 
 **Output:**
+
 ```text
 output/<workspace>/<uvp_profile>/scan/ren_epc_scan_result.json
 ```
 
-**Why first:**
-This is the **source of truth from code**. Analyze and mapper never open `.cpp` files themselves — they consume this JSON.
-
-```text
-CPP / headers / makefiles
-        │
-        ▼
- scan_ren_epc.js
-        │
-        ▼
- ren_epc_scan_result.json   ← prerequisite for Step 2
-```
+**Note on path labeling:** `main()` requires the p4work `REN_EPC_DIRS`. Relative path / stream labeling in `getRelativePath` may still be in local/`codefiles` test mode in some checkouts (reference/target branches commented). When scanning real p4 trees, restore the reference/target roots in `getRelativePath` so `stream` is `reference` / `target` instead of `unknown` / `local`.
 
 ---
 
@@ -178,8 +194,12 @@ CPP / headers / makefiles
 
 **Does:**
 - Loads `ren_epc_scan_result.json` from Step 1
-- Loads **UVP** profile `.mk` (work laptop: `/data1/p4work/.../profiles/`; local: `dummy_profile.mk`)
-- Loads **behavior** profile `.mk` from the **same profiles directory** on work laptop (local: `mo2mmtsm.mk`)
+- Loads **UVP** profile `.mk` and **behavior** profile `.mk` from:
+
+```text
+/data1/p4work/<workspace>/stream_target/subsys_PLP/build/profiles/
+```
+
 - For each switch:
   - `UVP_SW_*` → scored against the UVP profile
   - `BEHAVIOR_MODE_IF_*` → paired to `UVP_SW_*` and scored against the **behavior** profile only (no fallback to UVP)
@@ -187,44 +207,29 @@ CPP / headers / makefiles
   - found in code + profile TRUE → `O`
   - found in code + profile FALSE/missing → `X`
   - not found in code → `-`
-- Builds **impacts** (file + function affected)
-  - **New:** prefers `blocks[].functions` from the scanner
-- Writes Excel + JSON summary (one `result.json`; same `switches` shape; adds `behaviorProfileFile` metadata)
+- Builds **impacts** from **blocks and locations** (see §6)
+- Also adds UVP names that exist in the UVP profile but were never seen in the scan (`result: "-"`, impact `Not Found`)
+- Writes Excel + JSON summary
 
 **How to run:**
 
 ```bash
-node analyze_profile_from_scan.js <workspace> <uvp_profile> [behavior_profile]
+node analyze_profile_from_scan.js <workspace> <uvp_profile> <behavior_profile>
 ```
 
 **Inputs:**
 - `scan/ren_epc_scan_result.json`  ← **requires Step 1**
-- UVP profile `.mk` + behavior profile `.mk`
-- CLI: `<workspace> <uvp_profile> [behavior_profile]` (`behavior_profile` defaults to `mo2mmtsm`)
+- UVP profile `.mk` + behavior profile `.mk` (both must exist)
+- CLI: `<workspace> <uvp_profile> <behavior_profile>`
 
 **Outputs:**
+
 ```text
 output/<workspace>/<uvp_profile>/analyze/result.json
 output/<workspace>/<uvp_profile>/analyze/result.xlsx
 ```
 
-**Why second (and why not first):**
-It needs both:
-1. “What exists in code?” → from scan  
-2. “What does each product profile enable?” → from UVP `.mk` and behavior `.mk`
-
-Without the scan, it cannot know occurrence / impacts.  
-Without the profiles, it cannot assign `O` vs `X` for UVP/behavior.
-
-```text
-ren_epc_scan_result.json  +  uvp_profile.mk  +  behavior_profile.mk
-              │
-              ▼
- analyze_profile_from_scan.js
-              │
-              ▼
- result.json / result.xlsx   ← prerequisite for Step 3
-```
+`result.json` metadata includes `profileFile` / `profilePath` and `behaviorProfileFile` / `behaviorProfilePath`.
 
 ---
 
@@ -234,10 +239,16 @@ ren_epc_scan_result.json  +  uvp_profile.mk  +  behavior_profile.mk
 
 **Does:**
 - Loads `analyze/result.json` from Step 2
-- Loads template `templates/renEPC_change_point_list.xlsx`
-- Matches switch names + impact file/function rows on the **EMD** sheet
-- Writes Result into column E (`O` / `X` / `-`)
-- Logs matches / orphans / missing names
+- Loads template via `output_paths` (History sheet temporarily renamed with JSZip so ExcelJS can load it safely, then restored on write)
+- On the **EMD** sheet:
+  - Matches switch names + impact file/function rows
+  - Writes Result into column E (`O` / `X` / `-`)
+  - Marks unmatched template impacts as orphan (`-`)
+  - **Inserts** new impact rows when analyze found impacts not already in EMD
+  - **Creates name blocks** for switches present in `result.json` but missing from EMD (under Local Switch / Behavior / UVP sections)
+- Makefile / `rule.mak` paths keep `parent/filename` so `make_client/Makefile` vs `make_server/Makefile` stay distinct
+- If the primary output file is locked/open, writes the `*_locked.xlsx` fallback instead
+- Writes mapping logs (xlsx + json) with action types
 
 **How to run:**
 
@@ -247,30 +258,28 @@ node excel_mapper.js <workspace> <uvp_profile>
 
 **Inputs:**
 - `analyze/result.json`  ← **requires Step 2**
-- `templates/renEPC_change_point_list.xlsx`
+- Template xlsx
 - CLI: `<workspace> <uvp_profile>`
 
 **Outputs:**
+
 ```text
 output/<workspace>/<uvp_profile>/map/renEPC_change_point_list_updated.xlsx
 output/<workspace>/<uvp_profile>/map/mapping_log.xlsx
 output/<workspace>/<uvp_profile>/map/mapping_log.json
+(+ locked fallbacks if primary files cannot be written)
 ```
 
-**Why third:**
-The mapper does **not** scan code or read the profile.  
-It only places already-decided results (`O`/`X`/`-`) and impacts into the Excel template.  
-Those decisions live in `result.json` from Step 2.
+#### Mapping log actions
 
-```text
-result.json  +  renEPC_change_point_list.xlsx
-              │
-              ▼
-        excel_mapper.js
-              │
-              ▼
- updated Excel + mapping_log
-```
+| Action | Meaning |
+|--------|---------|
+| `Matched` | EMD impact row matched an analyze impact; Result written to E |
+| `Inserted` | Analyze impact not in EMD; new row inserted under the name |
+| `Orphan` | EMD impact row had no matching analyze impact (or name not in result); wrote `-` |
+| `NotFound` | Analyze impacts were only `Not Found`; wrote `-` |
+| `CreatedNameBlock` | Switch missing from EMD; new name + impact rows created in the right section |
+| `NameMissingFromEmd` | Switch missing from EMD and could not create a block (no valid impacts / section missing) |
 
 ---
 
@@ -278,9 +287,9 @@ result.json  +  renEPC_change_point_list.xlsx
 
 | # | Script | Question it answers | Needs before it | Produces |
 |---|--------|---------------------|-----------------|----------|
-| 1 | `scan_ren_epc.js` | Where do switches appear in code? | Source tree | `scan/*.json` |
+| 1 | `scan_ren_epc.js` | Where do switches appear in code? | Source tree + `local_switch.json` | `scan/*.json` |
 | 2 | `analyze_profile_from_scan.js` | Do code findings match UVP / behavior profiles? | Scan JSON + UVP `.mk` + behavior `.mk` | `analyze/result.json` |
-| 3 | `excel_mapper.js` | How do those results fill the EMD Excel? | `result.json` + template xlsx | `map/*updated*.xlsx` |
+| 3 | `excel_mapper.js` | How do those results fill the EMD Excel? | `result.json` + template xlsx | `map/*updated*.xlsx` + logs |
 
 ```text
 Code ──► Scan ──► Analyze(+UVP + Behavior profiles) ──► Excel map
@@ -289,7 +298,7 @@ Code ──► Scan ──► Analyze(+UVP + Behavior profiles) ──► Excel 
 
 ---
 
-## 2. Big picture (scan ↔ analyze data)
+## 3. Big picture (scan ↔ analyze data)
 
 ```text
 scan_ren_epc.js
@@ -298,12 +307,10 @@ scan_ren_epc.js
          └─ blocks[]      = each #if / #ifdef ... #endif region + functions inside it
 
 analyze_profile_from_scan.js
-   └─ reads that JSON + profile (.mk)
-         ├─ PASS/FAIL still uses locations count + profile TRUE/FALSE
-         └─ "which functions are affected?" now prefers blocks[].functions
+   └─ reads that JSON + UVP .mk + behavior .mk
+         ├─ PASS/FAIL uses locations count + profile TRUE/FALSE
+         └─ impacts merge blocks[].functions with locations (see §6)
 ```
-
-**Remember:**
 
 | Field | Question it answers |
 |-------|---------------------|
@@ -312,27 +319,19 @@ analyze_profile_from_scan.js
 
 ---
 
-## 3. Old vs new scanner
+## 4. Old vs new scanner
 
 ### Old behavior (before)
 
-- Found tokens on each line (`UVP_SW_*`, `BEHAVIOR_MODE_IF_*`, local switches)
+- Found tokens on each line
 - Guessed function as: **last function whose start line is above this line**
 - Problem: for a switch that **wraps** functions, `#ifdef` is between functions → wrong function name
-
-```cpp
-// previous function ended here
-
-#ifdef UVP_SW_AI_SYSTEM          // OLD scanner: wrongly said "previous_function"
-RETCODE Foo::func_a() { ... }
-RETCODE Foo::func_b() { ... }
-RETCODE Foo::func_c() { ... }
-#endif
-```
 
 ### New behavior (now)
 
 Still keeps line hits (`locations`), **and** builds real preprocessor **blocks**.
+
+Also builds proper function ranges (brace depth). If a function is missing its closing `}`, end is clipped to the next detected function so nested/later functions keep correct partners.
 
 ```cpp
 #ifdef UVP_SW_AI_SYSTEM
@@ -369,12 +368,11 @@ And for the `#ifdef` line itself in `locations`:
 }
 ```
 
-`(file-scope)` is correct for that **line** (it is not inside a function body).  
-The list of contained functions lives in **`blocks`**.
+`(file-scope)` is correct for that **line**. Contained functions live in **`blocks`**.
 
 ---
 
-## 4. New scan JSON shape (per switch)
+## 5. Scan JSON shape (per switch)
 
 ```json
 "UVP_SW_OCR": {
@@ -382,7 +380,7 @@ The list of contained functions lives in **`blocks`**.
   "occurrenceCount": 6,
   "locations": [
     {
-      "stream": "local",
+      "stream": "reference",
       "file": "ren_epc_docpg_param_creator.cpp",
       "fileType": "cpp",
       "line": 1010,
@@ -393,7 +391,7 @@ The list of contained functions lives in **`blocks`**.
   ],
   "blocks": [
     {
-      "stream": "local",
+      "stream": "reference",
       "file": "ren_epc_docpg_param_creator.cpp",
       "startLine": 1010,
       "endLine": 1068,
@@ -412,7 +410,7 @@ The list of contained functions lives in **`blocks`**.
 | Field | Meaning |
 |-------|---------|
 | `line` | 1-based line number |
-| `function` | Function that **contains this line**, or `(file-scope)` |
+| `function` | Function that **contains this line**, or `(file-scope)` / makefile context |
 | `role` | Why this hit exists (see below) |
 | `code` | Trimmed source line |
 
@@ -435,7 +433,7 @@ The list of contained functions lives in **`blocks`**.
 | `functions` | Functions covered by this block |
 | `parentSwitch` | Outer switch name if nested, else `null` |
 
-### `relation` values (the important new idea)
+### `relation` values
 
 ```text
 inside_function
@@ -450,7 +448,7 @@ mixed
   = rare / odd overlap
 ```
 
-#### Example A — switch inside a function
+#### Example — switch inside a function
 
 ```cpp
 RETCODE Foo::set_prohibition_function()
@@ -466,7 +464,7 @@ RETCODE Foo::set_prohibition_function()
 "functions": ["Foo::set_prohibition_function"]
 ```
 
-#### Example B — switch wraps many functions
+#### Example — switch wraps many functions
 
 ```cpp
 #if defined(UVP_SW_HCPDF_SPEED) || \
@@ -488,33 +486,16 @@ RETCODE Foo::set_stamp_hcpdf_doc_param() { ... }
 
 Both UVP names in the multi-line `#if` get the **same** block.
 
-#### Example C — switch wraps exactly one function
-
-```cpp
-#ifdef UVP_SW_AI_SYSTEM
-ren_epc_ai_param_creator*
-Foo::create_ai_param_creator(...) { ... }
-#endif
-```
-
-```json
-"relation": "wraps_functions",
-"functions": ["Foo::create_ai_param_creator"]
-```
-
-Same logic as Example B; only `functions.length === 1`.
-
 ---
 
-## 5. What still decides PASS / FAIL / NONE
+## 6. What decides PASS / FAIL / NONE
 
-Analyze **did not** change the PASS rule. It still uses:
+Analyze uses:
 
 - presence from `locations.length` (occurrence count)
 - profile value TRUE / FALSE / missing
 
 ```js
-// analyze_profile_from_scan.js (same idea as before)
 function evaluateResult(kind, profileValue, occurrenceCount) {
     if (kind === "local_switch") {
         return occurrenceCount > 0 ? "O" : "-";
@@ -532,97 +513,31 @@ function evaluateResult(kind, profileValue, occurrenceCount) {
 }
 ```
 
-So:
-
 | In code? | Profile | Result |
 |----------|---------|--------|
 | No | anything | `-` |
 | Yes | `TRUE` | `O` |
 | Yes | `FALSE` or missing | `X` |
 
+Behavior switches use the **paired** `UVP_SW_*` name inside the **behavior** profile only.
+
 ---
 
-## 6. How analyze was updated to complement the scanner
+## 7. How analyze builds impacts
 
-### Before (old analyze)
+### Current logic (`buildUniqueImpacts`)
 
-Impacts came only from `locations[].function`:
+Impacts are **merged**, not “blocks only”:
 
-```js
-// OLD idea
-impacts = unique(locations.map(loc => ({
-  file: loc.file,
-  function: loc.function
-})))
-```
+1. **From blocks** — each `block.functions[]` entry → `{ file, function, relation }`  
+   (empty `functions` → one `(file-scope)` impact for that block)
+2. **From locations** — each location function, with:
+   - makefile-style names normalized to `(file-scope)`
+   - `(file-scope)` locations **skipped** when the same file already has a real function impact
+   - location-sourced rows use `relation: "occurrence"`
+3. If still empty → `[{ file: "Not Found", function: "" }]`
 
-Problem for wrap cases:
-
-- `#ifdef` line → `(file-scope)` or wrong previous function
-- `#endif` line → last function only
-- Missing middle wrapped functions
-
-### After (new analyze)
-
-**Prefer `blocks`**, fall back to `locations` (compatible with old JSON too).
-
-```js
-// analyze_profile_from_scan.js — NEW
-function buildUniqueImpacts(locations, blocks) {
-    // 1) Prefer blocks (new scanner output)
-    if (blocks && blocks.length > 0) {
-        const fromBlocks = [];
-
-        for (const block of blocks) {
-            const file = block.file || "";
-            const functions =
-                Array.isArray(block.functions) && block.functions.length > 0
-                    ? block.functions
-                    : [""];
-
-            for (const functionName of functions) {
-                fromBlocks.push({
-                    file,
-                    function: functionName || "",
-                    relation: block.relation || ""
-                });
-            }
-        }
-
-        // unique by "file | function"
-        const unique = /* Map dedupe + sort */;
-        if (unique.length > 0) {
-            return unique;
-        }
-    }
-
-    // 2) Fallback for old scan JSON (no blocks)
-    //    use locations like before
-    return /* unique from locations */;
-}
-```
-
-Summary function list uses the same preference:
-
-```js
-function collectFunctionsFromScanEntry(scanEntry) {
-    // Prefer functions from blocks
-    const fromBlocks = [];
-    for (const block of scanEntry.blocks || []) {
-        for (const functionName of block.functions || []) {
-            if (functionName) fromBlocks.push(functionName);
-        }
-    }
-    if (fromBlocks.length > 0) {
-        return [...new Set(fromBlocks)].sort();
-    }
-
-    // Fallback: locations
-    return [...new Set(
-        (scanEntry.locations || []).map(l => l.function || "")
-    )].filter(Boolean).sort();
-}
-```
+Summary function list (`collectFunctionsFromScanEntry`) still **prefers** `blocks[].functions`, then falls back to `locations[].function`.
 
 In `buildRows`:
 
@@ -640,13 +555,15 @@ resultSwitches[name] = {
     result,
     occurrenceCount: locations.length,
     blocks,      // kept for debugging / downstream
-    impacts      // now block-aware
+    impacts      // block + location merge
 };
 ```
 
+Profile-only UVP names (in UVP `.mk` but not in scan) are appended with `result: "-"` and a `Not Found` impact.
+
 ---
 
-## 7. End-to-end example (HCPDF wrap)
+## 8. End-to-end example (HCPDF wrap)
 
 ### Source
 
@@ -707,11 +624,11 @@ RETCODE ...::set_stamp_hcpdf_doc_param(...) { ... }
 ]
 ```
 
-That `impacts` list is what `excel_mapper.js` uses for “Affecting Header/Function”.
+That `impacts` list is what `excel_mapper.js` matches / inserts for “Affecting Header/Function”.
 
 ---
 
-## 8. What to look at when reading JSON
+## 9. What to look at when reading JSON
 
 ```text
 Want to know...                         Look at...
@@ -721,44 +638,58 @@ PASS/FAIL vs profile?                   analyze result (O / X / -)
 Which functions does #if contain?       blocks[].functions + relation
 Why is this one line "(file-scope)"?    locations[].function for that line
                                         (normal for wrap-case #ifdef)
-What goes to Excel impacts?             analyze impacts (from blocks)
+What goes to Excel impacts?             analyze impacts (blocks + locations)
+Did mapper match / insert / orphan?     map/mapping_log.json actions
 ```
 
 ---
 
-## 9. Compatibility
+## 10. Compatibility
 
 | Scan JSON | Analyze behavior |
 |-----------|------------------|
-| New (has `blocks`) | Impacts from `blocks[].functions` |
-| Old (no `blocks`) | Falls back to `locations[].function` |
+| Has `blocks` | Impacts include block functions, then location hits |
+| No `blocks` (old) | Impacts come from locations only |
 
 Additive change: old fields remain; new fields were added.
 
 ---
 
-## 10. Quick cheatsheet
+## 11. Quick cheatsheet
 
 ```text
 How to run (from analyzer/)
-  node run_all.js <workspace> <uvp_profile> [behavior_profile]
+  node run_all.js <workspace> <uvp_profile> <behavior_profile>
   node scan_ren_epc.js <workspace> <uvp_profile>
-  node analyze_profile_from_scan.js <workspace> <uvp_profile> [behavior_profile]
+  node analyze_profile_from_scan.js <workspace> <uvp_profile> <behavior_profile>
   node excel_mapper.js <workspace> <uvp_profile>
 
-Profiles (local)
-  UVP       = dummy_profile.mk
-  Behavior  = mo2mmtsm.mk  (default behavior_profile name: mo2mmtsm)
+Profiles (work laptop)
+  dir = /data1/p4work/<workspace>/stream_target/subsys_PLP/build/profiles/
+  UVP       = <uvp_profile>.mk
+  Behavior  = <behavior_profile>.mk   (required; no default)
+
+output_paths.js
+  output/<workspace>/<uvp_profile>/{scan,analyze,map}/
+  locked xlsx fallbacks under map/ if primary files are locked
 
 scan_ren_epc.js
   locations  = line hits (+ role)
   blocks     = #if regions (+ relation + functions)
+  missing }  = function end clipped to next detected function
 
 analyze_profile_from_scan.js
   UVP_SW_*            → UVP profile
   BEHAVIOR_MODE_IF_*  → paired UVP_SW_* in behavior profile (no UVP fallback)
   PASS/FAIL           = locations + that profile TRUE/FALSE
-  impacts             = prefer blocks, else locations
+  impacts             = blocks + locations (merge)
+  also emits          = UVP names in profile but not in scan (−)
+
+excel_mapper.js
+  match / insert impacts, create missing name blocks
+  Makefile / rule.mak keep parent/filename
+  log actions: Matched, Inserted, Orphan, NotFound,
+               CreatedNameBlock, NameMissingFromEmd
 
 relation
   inside_function  = switch inside function
