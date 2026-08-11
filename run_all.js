@@ -76,10 +76,14 @@ async function main() {
         ]);
 
         console.log("\n=================================");
-        console.log("Step 3: Running excel mapper");
+        console.log("Step 3: Running excel mapper (ren_epc, dvu_ai, dvc_ai)");
         console.log("=================================");
 
-        await runNodeScript("excel_mapper.js", [WORKSPACE, PROFILE_INPUT]);
+        await runNodeScript("excel_mapper.js", [
+            WORKSPACE,
+            PROFILE_INPUT,
+            "all"
+        ]);
 
         console.log("\n=================================");
         console.log("Completed successfully");

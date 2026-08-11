@@ -11,6 +11,10 @@ function normalizeProfileName(profileInput) {
     return trimmed.endsWith(".mk") ? trimmed.slice(0, -3) : trimmed;
 }
 
+function firstExistingPath(candidates, fallback) {
+    return candidates.find((candidate) => fs.existsSync(candidate)) || fallback;
+}
+
 function getRunPaths(workspace, profileInput, baseDir = process.cwd()) {
     const profileName = normalizeProfileName(profileInput);
     const runRoot = path.join(baseDir, "output", workspace, profileName);
@@ -19,14 +23,29 @@ function getRunPaths(workspace, profileInput, baseDir = process.cwd()) {
     const analyzeDir = path.join(runRoot, "analyze");
     const mapDir = path.join(runRoot, "map");
 
-    const documentCandidates = [
-        path.join(baseDir, "document", "renEPC_change_point_list.xlsx"),
-        path.join(baseDir, "renEPC_change_point_list.xlsx")
-    ];
+    const renDocumentXlsx = firstExistingPath(
+        [
+            path.join(baseDir, "document", "renEPC_change_point_list.xlsx"),
+            path.join(baseDir, "renEPC_change_point_list.xlsx")
+        ],
+        path.join(baseDir, "document", "renEPC_change_point_list.xlsx")
+    );
 
-    const documentXlsx = documentCandidates.find((candidate) =>
-        fs.existsSync(candidate)
-    ) || documentCandidates[0];
+    const dvuDocumentXlsx = firstExistingPath(
+        [
+            path.join(baseDir, "document", "dvuAI_change_point_list.xlsx"),
+            path.join(baseDir, "dvuAI_change_point_list.xlsx")
+        ],
+        path.join(baseDir, "document", "dvuAI_change_point_list.xlsx")
+    );
+
+    const dvcDocumentXlsx = firstExistingPath(
+        [
+            path.join(baseDir, "document", "dvcAI_change_point_list.xlsx"),
+            path.join(baseDir, "dvcAI_change_point_list.xlsx")
+        ],
+        path.join(baseDir, "document", "dvcAI_change_point_list.xlsx")
+    );
 
     const scanJson = path.join(scanDir, "ren_epc_scan_result.json");
     const dvuAiScanJson = path.join(scanDir, "dvu_ai_scan_result.json");
@@ -39,6 +58,50 @@ function getRunPaths(workspace, profileInput, baseDir = process.cwd()) {
     const dvuAiResultXlsx = path.join(analyzeDir, "dvu_ai_result.xlsx");
     const dvcAiResultJson = path.join(analyzeDir, "dvc_ai_result.json");
     const dvcAiResultXlsx = path.join(analyzeDir, "dvc_ai_result.xlsx");
+
+    const mapUpdatedXlsx = path.join(
+        mapDir,
+        "renEPC_change_point_list_updated.xlsx"
+    );
+    const dvuMapUpdatedXlsx = path.join(
+        mapDir,
+        "dvuAI_change_point_list_updated.xlsx"
+    );
+    const dvcMapUpdatedXlsx = path.join(
+        mapDir,
+        "dvcAI_change_point_list_updated.xlsx"
+    );
+
+    const mappingLogXlsx = path.join(mapDir, "mapping_log.xlsx");
+    const dvuMappingLogXlsx = path.join(mapDir, "dvu_ai_mapping_log.xlsx");
+    const dvcMappingLogXlsx = path.join(mapDir, "dvc_ai_mapping_log.xlsx");
+
+    const mappingLogJson = path.join(mapDir, "mapping_log.json");
+    const dvuMappingLogJson = path.join(mapDir, "dvu_ai_mapping_log.json");
+    const dvcMappingLogJson = path.join(mapDir, "dvc_ai_mapping_log.json");
+
+    const mapLockedXlsx = path.join(
+        mapDir,
+        "renEPC_change_point_list_Updated_locked.xlsx"
+    );
+    const dvuMapLockedXlsx = path.join(
+        mapDir,
+        "dvuAI_change_point_list_Updated_locked.xlsx"
+    );
+    const dvcMapLockedXlsx = path.join(
+        mapDir,
+        "dvcAI_change_point_list_Updated_locked.xlsx"
+    );
+
+    const mappingLogLockedXlsx = path.join(mapDir, "mapping_log_locked.xlsx");
+    const dvuMappingLogLockedXlsx = path.join(
+        mapDir,
+        "dvu_ai_mapping_log_locked.xlsx"
+    );
+    const dvcMappingLogLockedXlsx = path.join(
+        mapDir,
+        "dvc_ai_mapping_log_locked.xlsx"
+    );
 
     return {
         workspace,
@@ -71,18 +134,54 @@ function getRunPaths(workspace, profileInput, baseDir = process.cwd()) {
             dvu_ai: dvuAiResultXlsx,
             dvc_ai: dvcAiResultXlsx
         },
-        mapUpdatedXlsx: path.join(
-            mapDir,
-            "renEPC_change_point_list_updated.xlsx"
-        ),
-        mappingLogXlsx: path.join(mapDir, "mapping_log.xlsx"),
-        mappingLogJson: path.join(mapDir, "mapping_log.json"),
-        mapLockedXlsx: path.join(
-            mapDir,
-            "renEPC_change_point_list_Updated_locked.xlsx"
-        ),
-        mappingLogLockedXlsx: path.join(mapDir, "mapping_log_locked.xlsx"),
-        documentXlsx
+        documentXlsx: renDocumentXlsx,
+        dvuDocumentXlsx,
+        dvcDocumentXlsx,
+        documentXlsxByModule: {
+            ren_epc: renDocumentXlsx,
+            dvu_ai: dvuDocumentXlsx,
+            dvc_ai: dvcDocumentXlsx
+        },
+        mapUpdatedXlsx,
+        dvuMapUpdatedXlsx,
+        dvcMapUpdatedXlsx,
+        mapUpdatedXlsxByModule: {
+            ren_epc: mapUpdatedXlsx,
+            dvu_ai: dvuMapUpdatedXlsx,
+            dvc_ai: dvcMapUpdatedXlsx
+        },
+        mappingLogXlsx,
+        dvuMappingLogXlsx,
+        dvcMappingLogXlsx,
+        mappingLogXlsxByModule: {
+            ren_epc: mappingLogXlsx,
+            dvu_ai: dvuMappingLogXlsx,
+            dvc_ai: dvcMappingLogXlsx
+        },
+        mappingLogJson,
+        dvuMappingLogJson,
+        dvcMappingLogJson,
+        mappingLogJsonByModule: {
+            ren_epc: mappingLogJson,
+            dvu_ai: dvuMappingLogJson,
+            dvc_ai: dvcMappingLogJson
+        },
+        mapLockedXlsx,
+        dvuMapLockedXlsx,
+        dvcMapLockedXlsx,
+        mapLockedXlsxByModule: {
+            ren_epc: mapLockedXlsx,
+            dvu_ai: dvuMapLockedXlsx,
+            dvc_ai: dvcMapLockedXlsx
+        },
+        mappingLogLockedXlsx,
+        dvuMappingLogLockedXlsx,
+        dvcMappingLogLockedXlsx,
+        mappingLogLockedXlsxByModule: {
+            ren_epc: mappingLogLockedXlsx,
+            dvu_ai: dvuMappingLogLockedXlsx,
+            dvc_ai: dvcMappingLogLockedXlsx
+        }
     };
 }
 

@@ -6,27 +6,143 @@ const { getRunPaths, ensureRunDirs } = require("./output_paths");
 
 const WORKSPACE = process.argv[2];
 const PROFILE_INPUT = process.argv[3];
+const MODULE_INPUT = process.argv[4] || "all";
+
+const VALID_MODULES = ["ren_epc", "dvu_ai", "dvc_ai", "all"];
 
 if (!WORKSPACE || !PROFILE_INPUT) {
     console.error("Usage:");
-    console.error("  node excel_mapper.js <workspace> <profile>");
+    console.error(
+        "  node excel_mapper.js <workspace> <profile> [ren_epc|dvu_ai|dvc_ai|all]"
+    );
     console.error("");
     console.error("Example:");
     console.error(
-        "  node excel_mapper.js ubasrh_KPC02530_2291_matsuri3_mp C2WC_prd_profile"
+        "  node excel_mapper.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile"
+    );
+    console.error(
+        "  node excel_mapper.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile dvu_ai"
+    );
+    process.exit(1);
+}
+
+if (!VALID_MODULES.includes(MODULE_INPUT)) {
+    console.error(
+        `Invalid module "${MODULE_INPUT}". Expected one of: ${VALID_MODULES.join(", ")}`
     );
     process.exit(1);
 }
 
 const RUN_PATHS = ensureRunDirs(getRunPaths(WORKSPACE, PROFILE_INPUT));
 
-const JSON_FILE_PATH = RUN_PATHS.resultJson;
-const TEMPLATE_PATH = RUN_PATHS.templateXlsx;
-const OUTPUT_PATH = RUN_PATHS.mapUpdatedXlsx;
-const LOG_PATH = RUN_PATHS.mappingLogXlsx;
-const LOG_JSON_PATH = RUN_PATHS.mappingLogJson;
-const LOCKED_OUTPUT_PATH = RUN_PATHS.mapLockedXlsx;
-const LOCKED_LOG_PATH = RUN_PATHS.mappingLogLockedXlsx;
+const MAP_MODULES = {
+    ren_epc: {
+        id: "ren_epc",
+        label: "renEPC",
+        documentName: "renEPC_change_point_list.xlsx",
+        resultJsonPath:
+            (RUN_PATHS.resultJsonByModule &&
+                RUN_PATHS.resultJsonByModule.ren_epc) ||
+            RUN_PATHS.resultJson,
+        documentPath:
+            (RUN_PATHS.documentXlsxByModule &&
+                RUN_PATHS.documentXlsxByModule.ren_epc) ||
+            RUN_PATHS.documentXlsx,
+        outputPath:
+            (RUN_PATHS.mapUpdatedXlsxByModule &&
+                RUN_PATHS.mapUpdatedXlsxByModule.ren_epc) ||
+            RUN_PATHS.mapUpdatedXlsx,
+        logPath:
+            (RUN_PATHS.mappingLogXlsxByModule &&
+                RUN_PATHS.mappingLogXlsxByModule.ren_epc) ||
+            RUN_PATHS.mappingLogXlsx,
+        logJsonPath:
+            (RUN_PATHS.mappingLogJsonByModule &&
+                RUN_PATHS.mappingLogJsonByModule.ren_epc) ||
+            RUN_PATHS.mappingLogJson,
+        lockedOutputPath:
+            (RUN_PATHS.mapLockedXlsxByModule &&
+                RUN_PATHS.mapLockedXlsxByModule.ren_epc) ||
+            RUN_PATHS.mapLockedXlsx,
+        lockedLogPath:
+            (RUN_PATHS.mappingLogLockedXlsxByModule &&
+                RUN_PATHS.mappingLogLockedXlsxByModule.ren_epc) ||
+            RUN_PATHS.mappingLogLockedXlsx
+    },
+    dvu_ai: {
+        id: "dvu_ai",
+        label: "dvuAI",
+        documentName: "dvuAI_change_point_list.xlsx",
+        resultJsonPath:
+            (RUN_PATHS.resultJsonByModule &&
+                RUN_PATHS.resultJsonByModule.dvu_ai) ||
+            path.join(RUN_PATHS.analyzeDir, "dvu_ai_result.json"),
+        documentPath:
+            (RUN_PATHS.documentXlsxByModule &&
+                RUN_PATHS.documentXlsxByModule.dvu_ai) ||
+            path.join(__dirname, "document", "dvuAI_change_point_list.xlsx"),
+        outputPath:
+            (RUN_PATHS.mapUpdatedXlsxByModule &&
+                RUN_PATHS.mapUpdatedXlsxByModule.dvu_ai) ||
+            path.join(RUN_PATHS.mapDir, "dvuAI_change_point_list_updated.xlsx"),
+        logPath:
+            (RUN_PATHS.mappingLogXlsxByModule &&
+                RUN_PATHS.mappingLogXlsxByModule.dvu_ai) ||
+            path.join(RUN_PATHS.mapDir, "dvu_ai_mapping_log.xlsx"),
+        logJsonPath:
+            (RUN_PATHS.mappingLogJsonByModule &&
+                RUN_PATHS.mappingLogJsonByModule.dvu_ai) ||
+            path.join(RUN_PATHS.mapDir, "dvu_ai_mapping_log.json"),
+        lockedOutputPath:
+            (RUN_PATHS.mapLockedXlsxByModule &&
+                RUN_PATHS.mapLockedXlsxByModule.dvu_ai) ||
+            path.join(
+                RUN_PATHS.mapDir,
+                "dvuAI_change_point_list_Updated_locked.xlsx"
+            ),
+        lockedLogPath:
+            (RUN_PATHS.mappingLogLockedXlsxByModule &&
+                RUN_PATHS.mappingLogLockedXlsxByModule.dvu_ai) ||
+            path.join(RUN_PATHS.mapDir, "dvu_ai_mapping_log_locked.xlsx")
+    },
+    dvc_ai: {
+        id: "dvc_ai",
+        label: "dvcAI",
+        documentName: "dvcAI_change_point_list.xlsx",
+        resultJsonPath:
+            (RUN_PATHS.resultJsonByModule &&
+                RUN_PATHS.resultJsonByModule.dvc_ai) ||
+            path.join(RUN_PATHS.analyzeDir, "dvc_ai_result.json"),
+        documentPath:
+            (RUN_PATHS.documentXlsxByModule &&
+                RUN_PATHS.documentXlsxByModule.dvc_ai) ||
+            path.join(__dirname, "document", "dvcAI_change_point_list.xlsx"),
+        outputPath:
+            (RUN_PATHS.mapUpdatedXlsxByModule &&
+                RUN_PATHS.mapUpdatedXlsxByModule.dvc_ai) ||
+            path.join(RUN_PATHS.mapDir, "dvcAI_change_point_list_updated.xlsx"),
+        logPath:
+            (RUN_PATHS.mappingLogXlsxByModule &&
+                RUN_PATHS.mappingLogXlsxByModule.dvc_ai) ||
+            path.join(RUN_PATHS.mapDir, "dvc_ai_mapping_log.xlsx"),
+        logJsonPath:
+            (RUN_PATHS.mappingLogJsonByModule &&
+                RUN_PATHS.mappingLogJsonByModule.dvc_ai) ||
+            path.join(RUN_PATHS.mapDir, "dvc_ai_mapping_log.json"),
+        lockedOutputPath:
+            (RUN_PATHS.mapLockedXlsxByModule &&
+                RUN_PATHS.mapLockedXlsxByModule.dvc_ai) ||
+            path.join(
+                RUN_PATHS.mapDir,
+                "dvcAI_change_point_list_Updated_locked.xlsx"
+            ),
+        lockedLogPath:
+            (RUN_PATHS.mappingLogLockedXlsxByModule &&
+                RUN_PATHS.mappingLogLockedXlsxByModule.dvc_ai) ||
+            path.join(RUN_PATHS.mapDir, "dvc_ai_mapping_log_locked.xlsx")
+    }
+};
+
 const SHEET_NAME = "EMD";
 const HISTORY_NAME = "History";
 const HISTORY_TEMP = "_History_renamed_";
@@ -47,7 +163,7 @@ const SECTION = {
     PRD_SW: "prd_sw"
 };
 
-function writeMappingLogJson(logEntries, stats) {
+function writeMappingLogJson(logEntries, stats, logJsonPath) {
     const json = {
         generatedAt: new Date().toISOString(),
         summary: {
@@ -71,12 +187,12 @@ function writeMappingLogJson(logEntries, stats) {
     };
 
     fs.writeFileSync(
-        LOG_JSON_PATH,
+        logJsonPath,
         JSON.stringify(json, null, 4),
         "utf8"
     );
 
-    return LOG_JSON_PATH;
+    return logJsonPath;
 }
 
 function cellText(value) {
@@ -265,7 +381,6 @@ function impactsMatch(emdParsed, analyzerParsed) {
     const emdFn = emdParsed.functionToken;
     const anFn = analyzerParsed.functionToken;
 
-    if ( emdFile.toLowerCase() === "ren_epc_operator_handling_factory.cpp" ) { console.log( "MATCH TEST", { emdFn, anFn, analyzerFile } ); }
     if (!emdFn && !anFn) {
         return true;
     }
@@ -326,8 +441,8 @@ async function renameHistoryInBuffer(buffer, fromName, toName) {
     });
 }
 
-async function loadTemplateWorkbook(templatePath) {
-    const original = fs.readFileSync(templatePath);
+async function loadDocumentWorkbook(documentPath) {
+    const original = fs.readFileSync(documentPath);
     const patched = await renameHistoryInBuffer(
         original,
         HISTORY_NAME,
@@ -338,7 +453,7 @@ async function loadTemplateWorkbook(templatePath) {
     return workbook;
 }
 
-async function writeOutputWorkbook(workbook, outputPath) {
+async function writeOutputWorkbook(workbook, outputPath, lockedOutputPath) {
     const buffer = await workbook.xlsx.writeBuffer();
     const restored = await renameHistoryInBuffer(
         Buffer.from(buffer),
@@ -351,7 +466,7 @@ async function writeOutputWorkbook(workbook, outputPath) {
         return outputPath;
     } catch (error) {
         if (error && error.code === "EBUSY") {
-            const fallback = LOCKED_OUTPUT_PATH;
+            const fallback = lockedOutputPath;
             fs.writeFileSync(fallback, restored);
             console.error(
                 `${outputPath} is open/locked. Wrote to ${fallback} instead.`
@@ -446,9 +561,9 @@ function isNameStart(bText, section) {
         return b.startsWith("BEHAVIOR_MODE_IF_");
     }
 
-    // Local Switch names use mixed prefixes (REN_EPC_*, WSC_*, EPC_ENV_*, RNU_*, ...)
+    // Local Switch names use mixed prefixes (REN_EPC_*, DVU_AI_*, _DVU_AI_*, ...)
     if (section === SECTION.LOCAL_SWITCH) {
-        return /^[A-Z][A-Z0-9_]*$/.test(b);
+        return /^_?[A-Z][A-Z0-9_]*$/.test(b);
     }
 
     return false;
@@ -730,7 +845,7 @@ function applyMapping(worksheet, switches) {
 
         const symbol = mapResultSymbol(entry.result);
         const analyzerImpacts = (entry.impacts || []).map(parseAnalyzerImpact);
-        if (group.name === "UVP_SW_AI_SYSTEM") { console.log( "ANALYZER IMPACTS", analyzerImpacts .filter(i => i.file === "ren_epc_operator_handling_factory.cpp" ) .map(i => ({ file: i.file, functionToken: i.functionToken, rawFunction: i.rawFunction })) ); }
+        
         const onlyNotFound =
             analyzerImpacts.length > 0 &&
             analyzerImpacts.every((impact) => impact.isNotFound);
@@ -761,7 +876,7 @@ function applyMapping(worksheet, switches) {
                         emdRow: rowNumber,
                         affecting: cText,
                         result: "-",
-                        reason: "Analyzer Not Found; wrote - on E for template impact"
+                        reason: "Analyzer Not Found; wrote - on E for document impact"
                     });
                 }
             }
@@ -1012,7 +1127,7 @@ for (const section of sectionOrder) {
     return { logEntries, matchedRows, insertedRows, groupCount: groups.length };
 }
 
-function writeGuideSheet(workbook) {
+function writeGuideSheet(workbook, moduleConfig) {
     const guide = workbook.addWorksheet("Guide", {
         properties: { tabColor: { argb: "FF5B9BD5" } }
     });
@@ -1022,18 +1137,23 @@ function writeGuideSheet(workbook) {
         { header: "Description", key: "description", width: 100 }
     ];
 
+    const updatedName = path.basename(moduleConfig.outputPath);
+    const documentName = moduleConfig.documentName;
+    const resultName = path.basename(moduleConfig.resultJsonPath);
+    const logName = path.basename(moduleConfig.logPath);
+
     const rows = [
         {
             topic: "About this file",
-            item: "mapping_log.xlsx",
+            item: logName,
             description:
-                "Investigation log for excel_mapper.js (Phase 2). Separate from renEPC_change_point_list_Updated.xlsx on purpose ? no log sheets are added inside the Updated workbook."
+                `Investigation log for excel_mapper.js (${moduleConfig.label}). Separate from ${updatedName} on purpose - no log sheets are added inside the Updated workbook.`
         },
         {
             topic: "How to use",
             item: "Workflow",
             description:
-                "1) Open Summary for counts. 2) Open Actions and filter by Action. 3) Use EMD Row + Name + Affecting to find the row in renEPC_change_point_list_Updated.xlsx. 4) Read Reason."
+                `1) Open Summary for counts. 2) Open Actions and filter by Action. 3) Use EMD Row + Name + Affecting to find the row in ${updatedName}. 4) Read Reason.`
         },
         {
             topic: "Column",
@@ -1049,7 +1169,7 @@ function writeGuideSheet(workbook) {
         {
             topic: "Column",
             item: "EMD Row",
-            description: "Row number on EMD in renEPC_change_point_list_Updated.xlsx."
+            description: `Row number on EMD in ${updatedName}.`
         },
         {
             topic: "Column",
@@ -1089,7 +1209,7 @@ function writeGuideSheet(workbook) {
             topic: "Action type",
             item: "Orphan",
             description:
-                "EMD C row with no analyzer match (or name missing from result.json); wrote - into E."
+                `EMD C row with no analyzer match (or name missing from ${resultName}); wrote - into E.`
         },
         {
             topic: "Action type",
@@ -1101,7 +1221,7 @@ function writeGuideSheet(workbook) {
             topic: "Action type",
             item: "NameMissingFromEmd",
             description:
-                "Name in result.json with no EMD Name block and no creatable impacts (Not Found only, or section missing)."
+                `Name in ${resultName} with no EMD Name block and no creatable impacts (Not Found only, or section missing).`
         },
         {
             topic: "EMD Row",
@@ -1113,7 +1233,7 @@ function writeGuideSheet(workbook) {
             topic: "Related files",
             item: "Inputs / outputs",
             description:
-                "Inputs: result.json, renEPC_change_point_list.xlsx. Outputs: renEPC_change_point_list_Updated.xlsx (EMD E filled), mapping_log.xlsx. Each run rebuilds from renEPC_change_point_list.xlsx. Rules: docs/emd_mapping.md."
+                `Inputs: ${resultName}, ${documentName}. Outputs: ${updatedName} (EMD E filled), ${logName}. Each run rebuilds from ${documentName}.`
         }
     ];
 
@@ -1130,9 +1250,9 @@ function writeGuideSheet(workbook) {
     }
 }
 
-async function writeMappingLogWorkbook(logEntries, stats) {
+async function writeMappingLogWorkbook(logEntries, stats, moduleConfig) {
     const workbook = new ExcelJS.Workbook();
-    writeGuideSheet(workbook);
+    writeGuideSheet(workbook, moduleConfig);
 
     const summary = workbook.addWorksheet("Summary");
     summary.columns = [
@@ -1143,7 +1263,12 @@ async function writeMappingLogWorkbook(logEntries, stats) {
     summary.addRow({
         metric: "GeneratedAt",
         value: new Date().toISOString(),
-        description: "When this mapping_log.xlsx was created."
+        description: `When this ${path.basename(moduleConfig.logPath)} was created.`
+    });
+    summary.addRow({
+        metric: "Module",
+        value: moduleConfig.label,
+        description: "Mapped module (renEPC / dvuAI / dvcAI)."
     });
     summary.addRow({
         metric: "EMD name groups",
@@ -1164,7 +1289,7 @@ async function writeMappingLogWorkbook(logEntries, stats) {
     summary.addRow({
         metric: "Orphan",
         value: logEntries.filter((e) => e.action === "Orphan").length,
-        description: "Template C rows with no analyzer match; E set to -."
+        description: "Document C rows with no analyzer match; E set to -."
     });
     summary.addRow({
         metric: "NotFound",
@@ -1175,7 +1300,7 @@ async function writeMappingLogWorkbook(logEntries, stats) {
         metric: "NameMissingFromEmd",
         value: logEntries.filter((e) => e.action === "NameMissingFromEmd")
             .length,
-        description: "Names in result.json with no EMD Name block."
+        description: "Names in analyze result with no EMD Name block."
     });
     summary.addRow({
         metric: "CreatedNameBlock",
@@ -1217,14 +1342,14 @@ async function writeMappingLogWorkbook(logEntries, stats) {
     actions.views = [{ state: "frozen", ySplit: 2 }];
 
     try {
-        await workbook.xlsx.writeFile(LOG_PATH);
-        return LOG_PATH;
+        await workbook.xlsx.writeFile(moduleConfig.logPath);
+        return moduleConfig.logPath;
     } catch (error) {
         if (error && error.code === "EBUSY") {
-            const fallback = LOCKED_LOG_PATH;
+            const fallback = moduleConfig.lockedLogPath;
             await workbook.xlsx.writeFile(fallback);
             console.error(
-                `${LOG_PATH} is open/locked. Wrote log to ${fallback} instead.`
+                `${moduleConfig.logPath} is open/locked. Wrote log to ${fallback} instead.`
             );
             return fallback;
         }
@@ -1235,36 +1360,45 @@ async function writeMappingLogWorkbook(logEntries, stats) {
 
 function loadResultJson(jsonPath) {
     if (!fs.existsSync(jsonPath)) {
-        throw new Error(`result.json not found: ${jsonPath}`);
+        throw new Error(`Analyze result not found: ${jsonPath}`);
     }
 
     const data = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
 
     if (!data.switches || typeof data.switches !== "object") {
-        throw new Error("result.json missing switches map");
+        throw new Error(`${jsonPath} missing switches map`);
     }
 
     return data;
 }
 
-async function main() {
-    if (!fs.existsSync(TEMPLATE_PATH)) {
+function resolveSelectedModules(moduleInput) {
+    if (moduleInput === "all") {
+        return Object.keys(MAP_MODULES);
+    }
+
+    return [moduleInput];
+}
+
+async function mapModule(moduleConfig) {
+    console.log(`\n--- Mapping ${moduleConfig.label} (${moduleConfig.id}) ---`);
+
+    if (!fs.existsSync(moduleConfig.documentPath)) {
         throw new Error(
-            `Template not found: ${TEMPLATE_PATH}\n` +
-                `Place renEPC_change_point_list.xlsx under templates/ or the project root.`
+            `Document not found: ${moduleConfig.documentPath}\n` +
+                `Place ${moduleConfig.documentName} under document/ or the project root.`
         );
     }
 
-    const resultData = loadResultJson(JSON_FILE_PATH);
+    const resultData = loadResultJson(moduleConfig.resultJsonPath);
     const switchCount = Object.keys(resultData.switches).length;
-    console.log(`Workspace: ${WORKSPACE}`);
-    console.log(`Profile: ${RUN_PATHS.profileName}`);
-    console.log(`Output dir: ${RUN_PATHS.mapDir}`);
-    console.log(`Loaded ${switchCount} switches from ${JSON_FILE_PATH}`);
-    console.log(`Template: ${TEMPLATE_PATH}`);
-    console.log(`Output: ${OUTPUT_PATH}`);
+    console.log(
+        `Loaded ${switchCount} switches from ${moduleConfig.resultJsonPath}`
+    );
+    console.log(`Document: ${moduleConfig.documentPath}`);
+    console.log(`Output: ${moduleConfig.outputPath}`);
 
-    const workbook = await loadTemplateWorkbook(TEMPLATE_PATH);
+    const workbook = await loadDocumentWorkbook(moduleConfig.documentPath);
     const worksheetNames = workbook.worksheets.map((sheet) =>
         sheet.name === HISTORY_TEMP ? HISTORY_NAME : sheet.name
     );
@@ -1281,24 +1415,30 @@ async function main() {
     );
 
     const stats = {
-    groupCount,
-    matchedRows,
-    insertedRows
-};
-
-const logJsonPath = writeMappingLogJson(
-    logEntries,
-    stats
-);
-
-    const logPathWritten = await writeMappingLogWorkbook(logEntries, {
         groupCount,
         matchedRows,
         insertedRows
-    });
-    console.log(`Wrote ${logPathWritten}`);
+    };
 
-    const outputWritten = await writeOutputWorkbook(workbook, OUTPUT_PATH);
+    // Enabled this for Debugging
+    // const logJsonPath = writeMappingLogJson(
+    //     logEntries,
+    //     stats,
+    //     moduleConfig.logJsonPath
+    // );
+
+    // const logPathWritten = await writeMappingLogWorkbook(
+    //     logEntries,
+    //     stats,
+    //     moduleConfig
+    // );
+    // console.log(`Wrote ${logPathWritten}`);
+
+    const outputWritten = await writeOutputWorkbook(
+        workbook,
+        moduleConfig.outputPath,
+        moduleConfig.lockedOutputPath
+    );
     console.log(`Wrote ${outputWritten}`);
 
     console.log(`EMD name groups: ${groupCount}`);
@@ -1311,6 +1451,19 @@ const logJsonPath = writeMappingLogJson(
                     .length
             }`
     );
+}
+
+async function main() {
+    const selectedModules = resolveSelectedModules(MODULE_INPUT);
+
+    console.log(`Workspace: ${WORKSPACE}`);
+    console.log(`Profile: ${RUN_PATHS.profileName}`);
+    console.log(`Output dir: ${RUN_PATHS.mapDir}`);
+    console.log(`Modules: ${selectedModules.join(", ")}`);
+
+    for (const moduleId of selectedModules) {
+        await mapModule(MAP_MODULES[moduleId]);
+    }
 }
 
 module.exports = {
