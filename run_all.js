@@ -4,7 +4,7 @@ const { getRunPaths, ensureRunDirs } = require("./output_paths");
 
 const WORKSPACE = process.argv[2];
 const PROFILE_INPUT = process.argv[3];
-const BEHAVIOR_PROFILE_INPUT = process.argv[4] || "mo2mmtsm";
+const BEHAVIOR_PROFILE_INPUT = process.argv[4];
 
 if (!WORKSPACE || !PROFILE_INPUT) {
     console.error("Usage:");
@@ -14,11 +14,7 @@ if (!WORKSPACE || !PROFILE_INPUT) {
     console.error("");
     console.error("Example:");
     console.error(
-        "  node run_all.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile mo2mmtsm"
-    );
-    console.error("");
-    console.error(
-        "  behavior_profile defaults to mo2mmtsm when omitted (local);"
+        "  node run_all.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile mo2cc5lpN01_uvp_profile"
     );
     console.error("  it is passed only to analyze_profile_from_scan.js.");
     process.exit(1);
@@ -59,10 +55,14 @@ async function main() {
         console.log(`Output root: ${RUN_PATHS.runRoot}`);
 
         console.log("=================================");
-        console.log("Step 1: Scanning ren_epc");
+        console.log("Step 1: Scanning switches (ren_epc, dvu_ai, dvc_ai)");
         console.log("=================================");
 
-        await runNodeScript("scan_ren_epc.js", [WORKSPACE, PROFILE_INPUT]);
+        await runNodeScript("scan_switches.js", [
+            WORKSPACE,
+            PROFILE_INPUT,
+            "all"
+        ]);
 
         console.log("\n=================================");
         console.log("Step 2: Analyzing profile from scan");

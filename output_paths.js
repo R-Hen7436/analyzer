@@ -19,14 +19,18 @@ function getRunPaths(workspace, profileInput, baseDir = process.cwd()) {
     const analyzeDir = path.join(runRoot, "analyze");
     const mapDir = path.join(runRoot, "map");
 
-    const templateCandidates = [
-        path.join(baseDir, "templates", "renEPC_change_point_list.xlsx"),
+    const documentCandidates = [
+        path.join(baseDir, "document", "renEPC_change_point_list.xlsx"),
         path.join(baseDir, "renEPC_change_point_list.xlsx")
     ];
 
-    const templateXlsx = templateCandidates.find((candidate) =>
+    const documentXlsx = documentCandidates.find((candidate) =>
         fs.existsSync(candidate)
-    ) || templateCandidates[0];
+    ) || documentCandidates[0];
+
+    const scanJson = path.join(scanDir, "ren_epc_scan_result.json");
+    const dvuAiScanJson = path.join(scanDir, "dvu_ai_scan_result.json");
+    const dvcAiScanJson = path.join(scanDir, "dvc_ai_scan_result.json");
 
     return {
         workspace,
@@ -35,7 +39,14 @@ function getRunPaths(workspace, profileInput, baseDir = process.cwd()) {
         scanDir,
         analyzeDir,
         mapDir,
-        scanJson: path.join(scanDir, "ren_epc_scan_result.json"),
+        scanJson,
+        dvuAiScanJson,
+        dvcAiScanJson,
+        scanJsonByModule: {
+            ren_epc: scanJson,
+            dvu_ai: dvuAiScanJson,
+            dvc_ai: dvcAiScanJson
+        },
         resultJson: path.join(analyzeDir, "result.json"),
         resultXlsx: path.join(analyzeDir, "result.xlsx"),
         mapUpdatedXlsx: path.join(
@@ -49,7 +60,7 @@ function getRunPaths(workspace, profileInput, baseDir = process.cwd()) {
             "renEPC_change_point_list_Updated_locked.xlsx"
         ),
         mappingLogLockedXlsx: path.join(mapDir, "mapping_log_locked.xlsx"),
-        templateXlsx
+        documentXlsx
     };
 }
 
