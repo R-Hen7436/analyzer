@@ -59,8 +59,12 @@ const SCAN_MODULES = {
         outputJson: RUN_PATHS.scanJsonByModule.dvu_ai,
         dirs: [
             {
+                stream: "reference",
+                path: `/data1/p4work/${WORKSPACE}/stream_reference/core_parts/subsys_PLP/platform_middleware/dvu/dvu_ai`
+            },
+            {
                 stream: "target",
-                path: `/home/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/platform_middleware/dvu/dvu_ai`
+                path: `/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/platform_middleware/dvu/dvu_ai`
             }
         ]
     },
@@ -70,8 +74,12 @@ const SCAN_MODULES = {
         outputJson: RUN_PATHS.scanJsonByModule.dvc_ai,
         dirs: [
             {
+                stream: "reference",
+                path: `/data1/p4work/${WORKSPACE}/stream_reference/core_parts/subsys_PLP/platform_element/dvc/dvc_ai`
+            },
+            {
                 stream: "target",
-                path: `/home/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/platform_element/dvc/dvc_ai`
+                path: `/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/platform_element/dvc/dvc_ai`
             }
         ]
     }
@@ -1123,24 +1131,45 @@ function resolveSelectedModules(moduleInput) {
 }
 
 function scanModule(moduleConfig, localSwitchNames, localSwitchPatterns, localSwitchNameSet) {
-    const dirPaths = moduleConfig.dirs.map((dir) => dir.path);
+    console.log(`\n--- Scanning ${moduleConfig.label} (${moduleConfig.id}) ---`);
 
-    for (const dir of dirPaths) {
-        if (!fs.existsSync(dir)) {
-            throw new Error(`${moduleConfig.id} path not found: ${dir}`);
+    const existingDirs = [];
+    const missingDirs = [];
+
+    for (const dir of moduleConfig.dirs) {
+        if (fs.existsSync(dir.path)) {
+            existingDirs.push(dir);
+            console.log(`Found ${dir.stream}: ${dir.path}`);
+        } else {
+            missingDirs.push(dir);
+            console.warn(`Missing ${dir.stream}: ${dir.path}`);
         }
     }
 
-    console.log(`\n--- Scanning ${moduleConfig.label} (${moduleConfig.id}) ---`);
-    console.log(`Scanning: ${dirPaths.join(", ")}`);
+    if (existingDirs.length === 0) {
+        throw new Error(
+            `${moduleConfig.id} path not found. Checked:\n` +
+                moduleConfig.dirs.map((dir) => `  - ${dir.path}`).join("\n")
+        );
+    }
 
     const files = [];
 
-    for (const dir of dirPaths) {
-        files.push(...collectFiles(dir));
+    for (const dir of existingDirs) {
+        const dirFiles = collectFiles(dir.path);
+        console.log(
+            `  ${dir.stream}: ${dirFiles.length} scannable file(s)`
+        );
+        files.push(...dirFiles);
     }
 
     console.log(`Scannable files found: ${files.length}`);
+
+    if (files.length === 0) {
+        console.warn(
+            `Warning: ${moduleConfig.id} directories exist but no scannable source files were found.`
+        );
+    }
 
     const allOccurrences = [];
     const allBlocks = [];
@@ -1150,7 +1179,7 @@ function scanModule(moduleConfig, localSwitchNames, localSwitchPatterns, localSw
             filePath,
             localSwitchPatterns,
             localSwitchNameSet,
-            moduleConfig.dirs
+            existingDirs
         );
         allOccurrences.push(...occurrences);
         allBlocks.push(...blocks);
@@ -1159,7 +1188,7 @@ function scanModule(moduleConfig, localSwitchNames, localSwitchPatterns, localSw
     const report = buildJsonReport(
         WORKSPACE,
         moduleConfig.id,
-        moduleConfig.dirs,
+        existingDirs,
         files,
         allOccurrences,
         allBlocks,
