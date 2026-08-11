@@ -32,6 +32,14 @@ function getRunPaths(workspace, profileInput, baseDir = process.cwd()) {
     const dvuAiScanJson = path.join(scanDir, "dvu_ai_scan_result.json");
     const dvcAiScanJson = path.join(scanDir, "dvc_ai_scan_result.json");
 
+    // Keep result.json/xlsx as ren_epc aliases for excel_mapper compatibility.
+    const resultJson = path.join(analyzeDir, "result.json");
+    const resultXlsx = path.join(analyzeDir, "result.xlsx");
+    const dvuAiResultJson = path.join(analyzeDir, "dvu_ai_result.json");
+    const dvuAiResultXlsx = path.join(analyzeDir, "dvu_ai_result.xlsx");
+    const dvcAiResultJson = path.join(analyzeDir, "dvc_ai_result.json");
+    const dvcAiResultXlsx = path.join(analyzeDir, "dvc_ai_result.xlsx");
+
     return {
         workspace,
         profileName,
@@ -47,8 +55,22 @@ function getRunPaths(workspace, profileInput, baseDir = process.cwd()) {
             dvu_ai: dvuAiScanJson,
             dvc_ai: dvcAiScanJson
         },
-        resultJson: path.join(analyzeDir, "result.json"),
-        resultXlsx: path.join(analyzeDir, "result.xlsx"),
+        resultJson,
+        resultXlsx,
+        dvuAiResultJson,
+        dvuAiResultXlsx,
+        dvcAiResultJson,
+        dvcAiResultXlsx,
+        resultJsonByModule: {
+            ren_epc: resultJson,
+            dvu_ai: dvuAiResultJson,
+            dvc_ai: dvcAiResultJson
+        },
+        resultXlsxByModule: {
+            ren_epc: resultXlsx,
+            dvu_ai: dvuAiResultXlsx,
+            dvc_ai: dvcAiResultXlsx
+        },
         mapUpdatedXlsx: path.join(
             mapDir,
             "renEPC_change_point_list_updated.xlsx"
