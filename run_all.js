@@ -65,13 +65,14 @@ async function main() {
         ]);
 
         console.log("\n=================================");
-        console.log("Step 2: Analyzing profile from scan");
+        console.log("Step 2: Analyzing profile from scan (ren_epc, dvu_ai, dvc_ai)");
         console.log("=================================");
 
         await runNodeScript("analyze_profile_from_scan.js", [
             WORKSPACE,
             PROFILE_INPUT,
-            BEHAVIOR_PROFILE_INPUT
+            BEHAVIOR_PROFILE_INPUT,
+            "all"
         ]);
 
         console.log("\n=================================");

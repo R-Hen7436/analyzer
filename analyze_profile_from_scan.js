@@ -5,6 +5,10 @@ const { getRunPaths, ensureRunDirs } = require("./output_paths");
 
 const WORKSPACE = process.argv[2];
 const PROFILE_INPUT = process.argv[3];
+const BEHAVIOR_PROFILE_INPUT = process.argv[4];
+const MODULE_INPUT = process.argv[5] || "all";
+
+const VALID_MODULES = ["ren_epc", "dvu_ai", "dvc_ai", "all"];
 
 const RESULT = {
     PASS: "O",
@@ -14,36 +18,75 @@ const RESULT = {
 
 const FONT_NAME = "Meiryo UI";
 
-if (!WORKSPACE || !PROFILE_INPUT) {
+if (!WORKSPACE || !PROFILE_INPUT || !BEHAVIOR_PROFILE_INPUT) {
     console.error("Usage:");
-    console.error("  node analyze_profile_from_scan.js <workspace> <profile>");
+    console.error(
+        "  node analyze_profile_from_scan.js <workspace> <uvp_profile> <behavior_profile> [ren_epc|dvu_ai|dvc_ai|all]"
+    );
     console.error("");
     console.error("Example:");
-    console.error("  node analyze_profile_from_scan.js ubasrh_KPC02530_2291_matsuri3_mp C2WC_prd_profile");
+    console.error(
+        "  node analyze_profile_from_scan.js ubasrh_KPC02530_2291_matsuri3_mp mo2cc5lpN01_uvp_profile C2YC_uvp_profile"
+    );
+    console.error(
+        "  node analyze_profile_from_scan.js ubasrh_KPC02530_2291_matsuri3_mp mo2cc5lpN01_uvp_profile C2YC_uvp_profile dvu_ai"
+    );
     console.error("");
     console.error("Note:");
-    console.error("  You can pass profile with or without .mk");
+    console.error("  You can pass profile names with or without .mk");
+    console.error("  Module defaults to all when omitted.");
+    process.exit(1);
+}
+
+if (!VALID_MODULES.includes(MODULE_INPUT)) {
+    console.error(
+        `Invalid module "${MODULE_INPUT}". Expected one of: ${VALID_MODULES.join(", ")}`
+    );
     process.exit(1);
 }
 
 const RUN_PATHS = ensureRunDirs(getRunPaths(WORKSPACE, PROFILE_INPUT));
 
-const SCAN_JSON_PATH = RUN_PATHS.scanJson;
-const RESULT_JSON_PATH = RUN_PATHS.resultJson;
-const RESULT_XLSX_PATH = RUN_PATHS.resultXlsx;
+const ANALYZE_MODULES = {
+    ren_epc: {
+        id: "ren_epc",
+        label: "renEPC",
+        scanJsonPath: RUN_PATHS.scanJsonByModule.ren_epc,
+        resultJsonPath: RUN_PATHS.resultJsonByModule.ren_epc,
+        resultXlsxPath: RUN_PATHS.resultXlsxByModule.ren_epc
+    },
+    dvu_ai: {
+        id: "dvu_ai",
+        label: "dvuAI",
+        scanJsonPath: RUN_PATHS.scanJsonByModule.dvu_ai,
+        resultJsonPath: RUN_PATHS.resultJsonByModule.dvu_ai,
+        resultXlsxPath: RUN_PATHS.resultXlsxByModule.dvu_ai
+    },
+    dvc_ai: {
+        id: "dvc_ai",
+        label: "dvcAI",
+        scanJsonPath: RUN_PATHS.scanJsonByModule.dvc_ai,
+        resultJsonPath: RUN_PATHS.resultJsonByModule.dvc_ai,
+        resultXlsxPath: RUN_PATHS.resultXlsxByModule.dvc_ai
+    }
+};
 
 const PROFILE_FILE_NAME = PROFILE_INPUT.endsWith(".mk")
     ? PROFILE_INPUT
     : `${PROFILE_INPUT}.mk`;
 
-// Original work-laptop profile path (restore when using real p4work):
-// const PROFILE_DIR =
-//     `/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/build/profiles`;
-// const PROFILE_MK_PATH =
-//     path.join(PROFILE_DIR, PROFILE_FILE_NAME);
+const BEHAVIOR_PROFILE_FILE_NAME = BEHAVIOR_PROFILE_INPUT.endsWith(".mk")
+    ? BEHAVIOR_PROFILE_INPUT
+    : `${BEHAVIOR_PROFILE_INPUT}.mk`;
 
-// Local dummy profile for testing without work laptop:
-const PROFILE_MK_PATH = path.join(__dirname, "dummy_profile.mk");
+const PROFILE_DIR =
+    `/data1/p4work/${WORKSPACE}/stream_target/subsys_PLP/build/profiles`;
+const PROFILE_MK_PATH = path.join(PROFILE_DIR, PROFILE_FILE_NAME);
+const BEHAVIOR_PROFILE_MK_PATH = path.join(
+    PROFILE_DIR,
+    BEHAVIOR_PROFILE_FILE_NAME
+);
+
 
 function normalizeProfileValue(value) {
     if (!value) {
@@ -123,7 +166,7 @@ function pairedSwitchNameFromBehavior(behaviorName) {
     return `UVP_SW_${behaviorName.slice(prefix.length)}`;
 }
 
-function getProfileValueForName(name, kind, profileValues) {
+function getProfileValueForName(name, kind, uvpValues, behaviorValues) {
     if (kind === "local_switch") {
         return null;
     }
@@ -135,10 +178,11 @@ function getProfileValueForName(name, kind, profileValues) {
             return null;
         }
 
-        return profileValues[pairedSwitch] || null;
+        // Behavior scores only against the behavior profile map (no UVP fallback).
+        return behaviorValues[pairedSwitch] || null;
     }
 
-    return profileValues[name] || null;
+    return uvpValues[name] || null;
 }
 
 function formatProfileDisplay(kind, profileValue) {
@@ -165,44 +209,44 @@ function evaluateResult(kind, profileValue, occurrenceCount) {
     return RESULT.FAIL;
 }
 
-function buildNotes(kind, profileValue, occurrenceCount) {
+function buildNotes(kind, profileValue, occurrenceCount, moduleLabel) {
     if (kind === "local_switch") {
         if (!occurrenceCount || occurrenceCount === 0) {
-            return "Local Switch not found in renEPC files";
+            return `Local Switch not found in ${moduleLabel} files`;
         }
 
-        return "Local Switch found in renEPC files";
+        return `Local Switch found in ${moduleLabel} files`;
     }
 
     if (!occurrenceCount || occurrenceCount === 0) {
         if (kind === "behavior") {
-            return "Behavior not found in ren_epc scan result";
+            return `Behavior not found in ${moduleLabel} scan result`;
         }
 
-        return "Switch not found in ren_epc scan result";
+        return `Switch not found in ${moduleLabel} scan result`;
     }
 
     if (kind === "behavior") {
         if (profileValue === "TRUE") {
-            return "Behavior found in ren_epc and paired UVP switch is TRUE in profile";
+            return `Behavior found in ${moduleLabel} and paired UVP switch is TRUE in behavior profile`;
         }
 
         if (profileValue === "FALSE") {
-            return "Behavior found in ren_epc but paired UVP switch is FALSE in profile";
+            return `Behavior found in ${moduleLabel} but paired UVP switch is FALSE in behavior profile`;
         }
 
-        return "Behavior found in ren_epc but paired UVP switch is missing from profile";
+        return `Behavior found in ${moduleLabel} but paired UVP switch is missing from behavior profile`;
     }
 
     if (profileValue === "TRUE") {
-        return "Switch found in ren_epc and TRUE in profile";
+        return `Switch found in ${moduleLabel} and TRUE in profile`;
     }
 
     if (profileValue === "FALSE") {
-        return "Switch found in ren_epc but FALSE in profile";
+        return `Switch found in ${moduleLabel} but FALSE in profile`;
     }
 
-    return "Switch found in ren_epc but missing from profile";
+    return `Switch found in ${moduleLabel} but missing from profile`;
 }
 
 function normalizeImpactFunction(functionName) {
@@ -359,7 +403,7 @@ function buildImpactRowsForName(name, result, impacts) {
     }));
 }
 
-function buildRows(scanResult, profileValues) {
+function buildRows(scanResult, uvpValues, behaviorValues, moduleLabel) {
     const summaryRows = [];
     const detailRows = [];
     const impactRows = [];
@@ -380,10 +424,20 @@ function buildRows(scanResult, profileValues) {
 
         const locations = scanEntry.locations || [];
         const blocks = scanEntry.blocks || [];
-        const profileValue = getProfileValueForName(name, kind, profileValues);
+        const profileValue = getProfileValueForName(
+            name,
+            kind,
+            uvpValues,
+            behaviorValues
+        );
         const profileDisplay = formatProfileDisplay(kind, profileValue);
         const result = evaluateResult(kind, profileValue, locations.length);
-        const notes = buildNotes(kind, profileValue, locations.length);
+        const notes = buildNotes(
+            kind,
+            profileValue,
+            locations.length,
+            moduleLabel
+        );
 
         const functions = collectFunctionsFromScanEntry(scanEntry);
 
@@ -428,16 +482,16 @@ function buildRows(scanResult, profileValues) {
     }
 
     /*
-     * Add profile switches that were not found in scan result.
-     * These are useful because profile may define UVP_SW_XXX
-     * even if ren_epc does not contain it.
+     * Add UVP profile switches that were not found in scan result.
+     * These are useful because the UVP profile may define UVP_SW_XXX
+     * even if the scanned module does not contain it.
      */
-    for (const profileName of Object.keys(profileValues).sort()) {
+    for (const profileName of Object.keys(uvpValues).sort()) {
         if (resultSwitches[profileName]) {
             continue;
         }
 
-        const profileValue = profileValues[profileName];
+        const profileValue = uvpValues[profileName];
         const impacts = buildUniqueImpacts([]);
 
         summaryRows.push({
@@ -447,7 +501,7 @@ function buildRows(scanResult, profileValues) {
             occurrenceCount: 0,
             functions: [],
             result: RESULT.NONE,
-            notes: "Defined in profile but not found in ren_epc scan result"
+            notes: `Defined in profile but not found in ${moduleLabel} scan result`
         });
 
         impactRows.push(
@@ -575,7 +629,7 @@ function writeSheetRows(worksheet, headers, rows, resultColumnName) {
     ];
 }
 
-async function writeExcelReport(summaryRows, detailRows, impactRows) {
+async function writeExcelReport(summaryRows, detailRows, impactRows, resultXlsxPath) {
     const workbook = new ExcelJS.Workbook();
 
     const summarySheet = workbook.addWorksheet("Summary");
@@ -649,20 +703,30 @@ async function writeExcelReport(summaryRows, detailRows, impactRows) {
         }
     ];
 
-    await workbook.xlsx.writeFile(RESULT_XLSX_PATH);
+    await workbook.xlsx.writeFile(resultXlsxPath);
 }
 
-function writeJsonReport(scanResult, profileValues, resultSwitches) {
+function writeJsonReport(
+    moduleConfig,
+    scanResult,
+    uvpValues,
+    behaviorValues,
+    resultSwitches
+) {
     const jsonData = {
         generatedAt: new Date().toISOString(),
         workspace: WORKSPACE,
+        module: moduleConfig.id,
         profileFile: PROFILE_FILE_NAME,
         profilePath: PROFILE_MK_PATH,
-        scanJsonPath: SCAN_JSON_PATH,
+        behaviorProfileFile: BEHAVIOR_PROFILE_FILE_NAME,
+        behaviorProfilePath: BEHAVIOR_PROFILE_MK_PATH,
+        scanJsonPath: moduleConfig.scanJsonPath,
         scanGeneratedAt: scanResult.generatedAt || "",
         summary: {
             scanUniqueNameCount: scanResult.uniqueNameCount || 0,
-            profileSwitchCount: Object.keys(profileValues).length,
+            profileSwitchCount: Object.keys(uvpValues).length,
+            behaviorProfileSwitchCount: Object.keys(behaviorValues).length,
             resultSwitchCount: Object.keys(resultSwitches).length,
             pass: Object.values(resultSwitches).filter((entry) => entry.result === RESULT.PASS).length,
             fail: Object.values(resultSwitches).filter((entry) => entry.result === RESULT.FAIL).length,
@@ -672,43 +736,92 @@ function writeJsonReport(scanResult, profileValues, resultSwitches) {
     };
 
     fs.writeFileSync(
-        RESULT_JSON_PATH,
+        moduleConfig.resultJsonPath,
         JSON.stringify(jsonData, null, 4),
         "utf8"
     );
 }
 
-async function main() {
-    if (!fs.existsSync(PROFILE_MK_PATH)) {
-        throw new Error(`Profile file not found: ${PROFILE_MK_PATH}`);
+function resolveSelectedModules(moduleInput) {
+    if (moduleInput === "all") {
+        return Object.keys(ANALYZE_MODULES);
     }
 
-    const scanResult = loadScanResult(SCAN_JSON_PATH);
-    const profileValues = parseProfileMk(PROFILE_MK_PATH);
+    return [moduleInput];
+}
+
+async function analyzeModule(moduleConfig, uvpValues, behaviorValues) {
+    console.log(`\n--- Analyzing ${moduleConfig.label} (${moduleConfig.id}) ---`);
+    console.log(`Scan JSON: ${moduleConfig.scanJsonPath}`);
+
+    const scanResult = loadScanResult(moduleConfig.scanJsonPath);
 
     const {
         summaryRows,
         detailRows,
         impactRows,
         resultSwitches
-    } = buildRows(scanResult, profileValues);
+    } = buildRows(
+        scanResult,
+        uvpValues,
+        behaviorValues,
+        moduleConfig.label
+    );
 
-    await writeExcelReport(summaryRows, detailRows, impactRows);
-    writeJsonReport(scanResult, profileValues, resultSwitches);
+    await writeExcelReport(
+        summaryRows,
+        detailRows,
+        impactRows,
+        moduleConfig.resultXlsxPath
+    );
+    writeJsonReport(
+        moduleConfig,
+        scanResult,
+        uvpValues,
+        behaviorValues,
+        resultSwitches
+    );
 
     const pass = summaryRows.filter((row) => row.result === RESULT.PASS).length;
     const fail = summaryRows.filter((row) => row.result === RESULT.FAIL).length;
     const none = summaryRows.filter((row) => row.result === RESULT.NONE).length;
 
-    console.log(`Workspace: ${WORKSPACE}`);
-    console.log(`Profile: ${PROFILE_FILE_NAME}`);
-    console.log(`Profile path: ${PROFILE_MK_PATH}`);
-    console.log(`Output dir: ${RUN_PATHS.analyzeDir}`);
-    console.log(`Scan JSON: ${SCAN_JSON_PATH}`);
     console.log(`Analyzed names: ${summaryRows.length}`);
     console.log(`Results: O=${pass}, X=${fail}, -=${none}`);
-    console.log(`Wrote: ${RESULT_JSON_PATH}`);
-    console.log(`Wrote: ${RESULT_XLSX_PATH}`);
+    console.log(`Wrote: ${moduleConfig.resultJsonPath}`);
+    console.log(`Wrote: ${moduleConfig.resultXlsxPath}`);
+}
+
+async function main() {
+    if (!fs.existsSync(PROFILE_MK_PATH)) {
+        throw new Error(`UVP profile file not found: ${PROFILE_MK_PATH}`);
+    }
+
+    if (!fs.existsSync(BEHAVIOR_PROFILE_MK_PATH)) {
+        throw new Error(
+            `Behavior profile file not found: ${BEHAVIOR_PROFILE_MK_PATH}`
+        );
+    }
+
+    const uvpValues = parseProfileMk(PROFILE_MK_PATH);
+    const behaviorValues = parseProfileMk(BEHAVIOR_PROFILE_MK_PATH);
+    const selectedModules = resolveSelectedModules(MODULE_INPUT);
+
+    console.log(`Workspace: ${WORKSPACE}`);
+    console.log(`UVP profile: ${PROFILE_FILE_NAME}`);
+    console.log(`UVP profile path: ${PROFILE_MK_PATH}`);
+    console.log(`Behavior profile: ${BEHAVIOR_PROFILE_FILE_NAME}`);
+    console.log(`Behavior profile path: ${BEHAVIOR_PROFILE_MK_PATH}`);
+    console.log(`Output dir: ${RUN_PATHS.analyzeDir}`);
+    console.log(`Modules: ${selectedModules.join(", ")}`);
+
+    for (const moduleId of selectedModules) {
+        await analyzeModule(
+            ANALYZE_MODULES[moduleId],
+            uvpValues,
+            behaviorValues
+        );
+    }
 }
 
 if (require.main === module) {
