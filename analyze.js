@@ -1,0 +1,328 @@
+const { spawn } = require("child_process");
+const path = require("path");
+const readline = require("readline");
+const { getRunPaths, ensureRunDirs } = require("./lib/output_paths");
+const { listWorkspaces } = require("./lib/list_workspaces");
+const { listProfiles } = require("./lib/list_profiles");
+
+const MENU_ROWS = 5;
+const MENU_INDENT = "  ";
+const MENU_COL_GAP = 2;
+
+function printUsage() {
+    console.error("Module Feature Analysis");
+    console.error("");
+    console.error("Usage:");
+    console.error("  node analyze.js");
+    console.error(
+        "  node analyze.js <workspace> <uvp_profile> <behavior_profile>"
+    );
+    console.error("");
+    console.error("Example:");
+    console.error(
+        "  node analyze.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile mo2cc5lpN01_uvp_profile"
+    );
+}
+
+function formatMenuCell(number, name, numWidth, cellWidth) {
+    const prefix = `${String(number).padStart(numWidth)}. `;
+    const maxNameLength = Math.max(1, cellWidth - prefix.length);
+    let displayName = name;
+    if (displayName.length > maxNameLength) {
+        displayName =
+            maxNameLength <= 3
+                ? displayName.slice(0, maxNameLength)
+                : `${displayName.slice(0, maxNameLength - 3)}...`;
+    }
+    return `${prefix}${displayName}`.padEnd(cellWidth);
+}
+
+function formatColumnMenu(items, options = {}) {
+    const rows = options.rows || MENU_ROWS;
+    const terminalWidth = options.terminalWidth || process.stdout.columns || 80;
+    const count = items.length;
+    if (count === 0) {
+        return "";
+    }
+
+    const cols = Math.ceil(count / rows);
+    const numWidth = String(count).length;
+    const longestName = items.reduce(
+        (max, name) => Math.max(max, String(name).length),
+        0
+    );
+    const naturalWidth = numWidth + 2 + longestName;
+    const available =
+        terminalWidth - MENU_INDENT.length - MENU_COL_GAP * (cols - 1);
+    const maxWidth = Math.max(numWidth + 3, Math.floor(available / cols));
+    const cellWidth = Math.min(naturalWidth, maxWidth);
+
+    const lines = [];
+    for (let r = 0; r < rows; r += 1) {
+        const cells = [];
+        for (let c = 0; c < cols; c += 1) {
+            const index = c * rows + r;
+            if (index >= count) {
+                break;
+            }
+            cells.push(
+                formatMenuCell(index + 1, items[index], numWidth, cellWidth)
+            );
+        }
+        if (cells.length > 0) {
+            lines.push(MENU_INDENT + cells.join(" ".repeat(MENU_COL_GAP)));
+        }
+    }
+    return lines.join("\n");
+}
+
+function printColumnMenu(items) {
+    console.log(formatColumnMenu(items));
+}
+
+function ask(rl, prompt) {
+    return new Promise((resolve, reject) => {
+        const onClose = () => {
+            reject(new Error("Input closed before a selection was made"));
+        };
+        rl.once("close", onClose);
+        rl.question(prompt, (answer) => {
+            rl.removeListener("close", onClose);
+            if (answer == null) {
+                reject(new Error("Input closed before a selection was made"));
+                return;
+            }
+            resolve(answer);
+        });
+    });
+}
+
+async function promptForNumber(rl, count) {
+    while (true) {
+        const raw = await ask(rl, "Enter number: ");
+        const trimmed = String(raw).trim();
+        if (!/^\d+$/.test(trimmed)) {
+            continue;
+        }
+        const num = Number(trimmed);
+        if (num < 1 || num > count) {
+            continue;
+        }
+        return num;
+    }
+}
+
+async function selectFromMenu(rl, title, items) {
+    console.log(title);
+    printColumnMenu(items);
+    const num = await promptForNumber(rl, items.length);
+    return items[num - 1];
+}
+
+async function promptInteractiveInputs() {
+    const { workspaces } = listWorkspaces();
+    if (workspaces.length === 0) {
+        throw new Error("No workspaces found");
+    }
+
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    try {
+        const workspace = await selectFromMenu(
+            rl,
+            "Select Workspace",
+            workspaces
+        );
+        console.log("");
+
+        const { profiles } = listProfiles(workspace);
+        if (profiles.length < 2) {
+            throw new Error(
+                `Need at least 2 profiles to pick UVP and behavior (found ${profiles.length} in ${workspace})`
+            );
+        }
+
+        const uvpProfile = await selectFromMenu(
+            rl,
+            "Select Profiles (for UVP Switch)",
+            profiles
+        );
+        console.log("");
+
+        console.log("Select Profiles (for Behavior Switch)");
+        printColumnMenu(profiles);
+        let behaviorProfile;
+        while (true) {
+            const num = await promptForNumber(rl, profiles.length);
+            behaviorProfile = profiles[num - 1];
+            if (behaviorProfile === uvpProfile) {
+                console.log(
+                    "UVP and behavior profiles must be different."
+                );
+                continue;
+            }
+            break;
+        }
+
+        return {
+            workspace,
+            uvpProfile,
+            behaviorProfile
+        };
+    } finally {
+        rl.close();
+    }
+}
+
+function runNodeScript(scriptName, args) {
+    return new Promise((resolve, reject) => {
+        const scriptPath = path.join(__dirname, "lib", scriptName);
+        const child = spawn(process.execPath, [scriptPath, ...args], {
+            cwd: process.cwd(),
+            stdio: "inherit"
+        });
+
+        child.on("error", reject);
+
+        child.on("exit", (code, signal) => {
+            if (signal) {
+                reject(
+                    new Error(`${scriptName} terminated by signal ${signal}`)
+                );
+                return;
+            }
+
+            if (code !== 0) {
+                reject(new Error(`${scriptName} exited with code ${code}`));
+                return;
+            }
+
+            resolve();
+        });
+    });
+}
+
+function parseRunArgs(argv = process.argv) {
+    const workspace = argv[2];
+    const uvpProfile = argv[3];
+    const behaviorProfile = argv[4];
+    const hasAllArgs = Boolean(workspace && uvpProfile && behaviorProfile);
+    const hasPartialArgs = Boolean(workspace || uvpProfile || behaviorProfile);
+
+    return {
+        workspace,
+        uvpProfile,
+        behaviorProfile,
+        hasAllArgs,
+        hasPartialArgs
+    };
+}
+
+async function resolveRunInputs(argv = process.argv) {
+    const parsed = parseRunArgs(argv);
+
+    if (parsed.hasAllArgs) {
+        if (parsed.uvpProfile === parsed.behaviorProfile) {
+            throw new Error("UVP and behavior profiles must be different.");
+        }
+        return {
+            workspace: parsed.workspace,
+            profileInput: parsed.uvpProfile,
+            behaviorProfileInput: parsed.behaviorProfile
+        };
+    }
+
+    const selected = await promptInteractiveInputs();
+    return {
+        workspace: selected.workspace,
+        profileInput: selected.uvpProfile,
+        behaviorProfileInput: selected.behaviorProfile
+    };
+}
+
+async function runPipeline(workspace, profileInput, behaviorProfileInput) {
+    const RUN_PATHS = ensureRunDirs(getRunPaths(workspace, profileInput));
+    console.log(`Output root: ${RUN_PATHS.runRoot}`);
+
+    console.log("=================================");
+    console.log("Step 1: Scanning switches (ren_epc, dvu_ai, dvc_ai)");
+    console.log("=================================");
+
+    await runNodeScript("scan_switches.js", [
+        workspace,
+        profileInput,
+        "all"
+    ]);
+
+    console.log("\n=================================");
+    console.log("Step 2: Analyzing profile from scan (ren_epc, dvu_ai, dvc_ai)");
+    console.log("=================================");
+
+    await runNodeScript("analyze_profile_from_scan.js", [
+        workspace,
+        profileInput,
+        behaviorProfileInput,
+        "all"
+    ]);
+
+    console.log("\n=================================");
+    console.log("Step 3: Running excel mapper (ren_epc, dvu_ai, dvc_ai)");
+    console.log("=================================");
+
+    await runNodeScript("excel_mapper.js", [
+        workspace,
+        profileInput,
+        "all"
+    ]);
+
+    console.log("\n=================================");
+    console.log("Completed successfully");
+    console.log(`Results: ${RUN_PATHS.runRoot}`);
+    console.log("=================================");
+}
+
+async function main() {
+    try {
+        const parsed = parseRunArgs();
+
+        if (!parsed.hasAllArgs && parsed.hasPartialArgs) {
+            printUsage();
+            process.exit(1);
+        }
+
+        console.log("Module Feature Analysis");
+
+        if (!parsed.hasAllArgs) {
+            console.log("");
+        }
+
+        const { workspace, profileInput, behaviorProfileInput } =
+            await resolveRunInputs();
+
+        if (!parsed.hasAllArgs) {
+            console.log("");
+        }
+
+        await runPipeline(workspace, profileInput, behaviorProfileInput);
+    } catch (error) {
+        console.error("\nExecution failed:");
+        console.error(error.message || error);
+        process.exitCode = 1;
+    }
+}
+
+if (require.main === module) {
+    main();
+}
+
+module.exports = {
+    formatColumnMenu,
+    promptForNumber,
+    promptInteractiveInputs,
+    parseRunArgs,
+    resolveRunInputs,
+    runPipeline
+};
