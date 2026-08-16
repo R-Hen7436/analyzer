@@ -5,7 +5,6 @@ const { getRunPaths, ensureRunDirs } = require("./lib/output_paths");
 const { listWorkspaces } = require("./lib/list_workspaces");
 const { listProfiles } = require("./lib/list_profiles");
 
-const MENU_ROWS = 5;
 const MENU_INDENT = "  ";
 const MENU_COL_GAP = 2;
 
@@ -24,54 +23,63 @@ function printUsage() {
     );
 }
 
-function formatMenuCell(number, name, numWidth, cellWidth) {
-    const prefix = `${String(number).padStart(numWidth)}. `;
-    const maxNameLength = Math.max(1, cellWidth - prefix.length);
-    let displayName = name;
-    if (displayName.length > maxNameLength) {
-        displayName =
-            maxNameLength <= 3
-                ? displayName.slice(0, maxNameLength)
-                : `${displayName.slice(0, maxNameLength - 3)}...`;
+function getTerminalWidth(options = {}) {
+    if (options.terminalWidth) {
+        return options.terminalWidth;
     }
-    return `${prefix}${displayName}`.padEnd(cellWidth);
+    const columns = process.stdout && process.stdout.columns;
+    return columns && columns > 0 ? columns : 80;
+}
+
+function formatMenuCell(number, name, numWidth, cellWidth) {
+    const text = `${String(number).padStart(numWidth)}. ${name}`;
+    if (!cellWidth || text.length >= cellWidth) {
+        return text;
+    }
+    return text.padEnd(cellWidth);
 }
 
 function formatColumnMenu(items, options = {}) {
-    const rows = options.rows || MENU_ROWS;
-    const terminalWidth = options.terminalWidth || process.stdout.columns || 80;
+    const terminalWidth = getTerminalWidth(options);
     const count = items.length;
     if (count === 0) {
         return "";
     }
 
-    const cols = Math.ceil(count / rows);
     const numWidth = String(count).length;
     const longestName = items.reduce(
         (max, name) => Math.max(max, String(name).length),
         0
     );
-    const naturalWidth = numWidth + 2 + longestName;
-    const available =
-        terminalWidth - MENU_INDENT.length - MENU_COL_GAP * (cols - 1);
-    const maxWidth = Math.max(numWidth + 3, Math.floor(available / cols));
-    const cellWidth = Math.min(naturalWidth, maxWidth);
+    const cellWidth = numWidth + 2 + longestName;
+    const available = Math.max(1, terminalWidth - MENU_INDENT.length);
+    const cols = Math.max(
+        1,
+        Math.min(
+            count,
+            Math.floor((available + MENU_COL_GAP) / (cellWidth + MENU_COL_GAP))
+        )
+    );
+    const rows = Math.ceil(count / cols);
 
     const lines = [];
     for (let r = 0; r < rows; r += 1) {
         const cells = [];
         for (let c = 0; c < cols; c += 1) {
-            const index = c * rows + r;
+            const index = r * cols + c;
             if (index >= count) {
                 break;
             }
             cells.push(
-                formatMenuCell(index + 1, items[index], numWidth, cellWidth)
+                formatMenuCell(
+                    index + 1,
+                    items[index],
+                    numWidth,
+                    cols > 1 ? cellWidth : null
+                )
             );
         }
-        if (cells.length > 0) {
-            lines.push(MENU_INDENT + cells.join(" ".repeat(MENU_COL_GAP)));
-        }
+        lines.push(MENU_INDENT + cells.join(" ".repeat(MENU_COL_GAP)));
     }
     return lines.join("\n");
 }
