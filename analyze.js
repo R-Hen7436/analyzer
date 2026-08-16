@@ -19,7 +19,7 @@ function printUsage() {
     console.error("");
     console.error("Example:");
     console.error(
-        "  node analyze.js ubasrh_KPC02530_2291_matsuri3_mp C2YC_uvp_profile mo2cc5lpN01_uvp_profile"
+        "  node analyze.js ubasrh_KPC02530_2291_matsuri3_mp mo2cc5lpN01_uvp_profile C2YC_uvp_profile"
     );
 }
 
@@ -88,6 +88,10 @@ function printColumnMenu(items) {
     console.log(formatColumnMenu(items));
 }
 
+function printBackOption(label) {
+    console.log(`${MENU_INDENT}0. ${label}`);
+}
+
 function ask(rl, prompt) {
     return new Promise((resolve, reject) => {
         const onClose = () => {
@@ -105,7 +109,9 @@ function ask(rl, prompt) {
     });
 }
 
-async function promptForNumber(rl, count) {
+async function promptForNumber(rl, count, options = {}) {
+    const allowBack = Boolean(options.allowBack);
+    const min = allowBack ? 0 : 1;
     while (true) {
         const raw = await ask(rl, "Enter number: ");
         const trimmed = String(raw).trim();
@@ -113,18 +119,33 @@ async function promptForNumber(rl, count) {
             continue;
         }
         const num = Number(trimmed);
-        if (num < 1 || num > count) {
+        if (num < min || num > count) {
             continue;
         }
         return num;
     }
 }
 
-async function selectFromMenu(rl, title, items) {
+async function selectFromMenu(rl, title, items, options = {}) {
+    const backLabel = options.backLabel;
     console.log(title);
     printColumnMenu(items);
-    const num = await promptForNumber(rl, items.length);
+    if (backLabel) {
+        printBackOption(backLabel);
+    }
+    const num = await promptForNumber(rl, items.length, {
+        allowBack: Boolean(backLabel)
+    });
+    if (num === 0) {
+        return null;
+    }
     return items[num - 1];
+}
+
+function cancelledError() {
+    const error = new Error("Cancelled");
+    error.cancelled = true;
+    return error;
 }
 
 async function promptInteractiveInputs() {
@@ -139,47 +160,74 @@ async function promptInteractiveInputs() {
     });
 
     try {
-        const workspace = await selectFromMenu(
-            rl,
-            "Select Workspace",
-            workspaces
-        );
-        console.log("");
-
-        const { profiles } = listProfiles(workspace);
-        if (profiles.length < 2) {
-            throw new Error(
-                `Need at least 2 profiles to pick UVP and behavior (found ${profiles.length} in ${workspace})`
-            );
-        }
-
-        const uvpProfile = await selectFromMenu(
-            rl,
-            "Select Profiles (for UVP Switch)",
-            profiles
-        );
-        console.log("");
-
-        console.log("Select Profiles (for Behavior Switch)");
-        printColumnMenu(profiles);
-        let behaviorProfile;
         while (true) {
-            const num = await promptForNumber(rl, profiles.length);
-            behaviorProfile = profiles[num - 1];
-            if (behaviorProfile === uvpProfile) {
-                console.log(
-                    "UVP and behavior profiles must be different."
-                );
+            const workspace = await selectFromMenu(
+                rl,
+                "Select Workspace",
+                workspaces,
+                { backLabel: "Exit" }
+            );
+            if (!workspace) {
+                throw cancelledError();
+            }
+
+            let profiles;
+            try {
+                ({ profiles } = listProfiles(workspace));
+            } catch (error) {
+                console.log("");
+                console.log(error.message);
+                console.log("");
                 continue;
             }
-            break;
-        }
 
-        return {
-            workspace,
-            uvpProfile,
-            behaviorProfile
-        };
+            if (profiles.length < 2) {
+                console.log("");
+                console.log(
+                    `Need at least 2 profiles to pick UVP and behavior (found ${profiles.length} in ${workspace})`
+                );
+                console.log("");
+                continue;
+            }
+
+            while (true) {
+                console.log("");
+                const uvpProfile = await selectFromMenu(
+                    rl,
+                    "Select Profiles (for UVP Switch)",
+                    profiles,
+                    { backLabel: "Back" }
+                );
+                if (!uvpProfile) {
+                    console.log("");
+                    break;
+                }
+
+                while (true) {
+                    console.log("");
+                    const behaviorProfile = await selectFromMenu(
+                        rl,
+                        "Select Profiles (for Behavior Switch)",
+                        profiles,
+                        { backLabel: "Back" }
+                    );
+                    if (!behaviorProfile) {
+                        break;
+                    }
+                    if (behaviorProfile === uvpProfile) {
+                        console.log(
+                            "UVP and behavior profiles must be different."
+                        );
+                        continue;
+                    }
+                    return {
+                        workspace,
+                        uvpProfile,
+                        behaviorProfile
+                    };
+                }
+            }
+        }
     } finally {
         rl.close();
     }
@@ -252,7 +300,9 @@ async function resolveRunInputs(argv = process.argv) {
 }
 
 async function runPipeline(workspace, profileInput, behaviorProfileInput) {
-    const RUN_PATHS = ensureRunDirs(getRunPaths(workspace, profileInput));
+    const RUN_PATHS = ensureRunDirs(
+        getRunPaths(workspace, profileInput, behaviorProfileInput)
+    );
     console.log(`Output root: ${RUN_PATHS.runRoot}`);
 
     console.log("=================================");
@@ -262,6 +312,7 @@ async function runPipeline(workspace, profileInput, behaviorProfileInput) {
     await runNodeScript("scan_switches.js", [
         workspace,
         profileInput,
+        behaviorProfileInput,
         "all"
     ]);
 
@@ -283,6 +334,7 @@ async function runPipeline(workspace, profileInput, behaviorProfileInput) {
     await runNodeScript("excel_mapper.js", [
         workspace,
         profileInput,
+        behaviorProfileInput,
         "all"
     ]);
 
@@ -316,6 +368,10 @@ async function main() {
 
         await runPipeline(workspace, profileInput, behaviorProfileInput);
     } catch (error) {
+        if (error && error.cancelled) {
+            console.log("Cancelled.");
+            return;
+        }
         console.error("\nExecution failed:");
         console.error(error.message || error);
         process.exitCode = 1;
